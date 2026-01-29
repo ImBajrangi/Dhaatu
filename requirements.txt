@@ -8,6 +8,6 @@ pillow
 numpy
 trimesh
 scipy
-gradio==5.15.0
-huggingface_hub
+gradio==4.44.1
+huggingface_hub<0.25
 requests
