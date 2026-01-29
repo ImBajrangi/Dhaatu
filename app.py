@@ -91,4 +91,4 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 # Launch
 if __name__ == "__main__":
     print("Starting Dhaatu - Your Own Image-to-3D Generator...")
-    demo.launch(ssr_mode=False, show_api=False)
+    demo.launch()
