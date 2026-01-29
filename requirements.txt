@@ -1,5 +1,5 @@
 # Dhaatu: Custom Image-to-3D Generator
-# Works on CPU - no GPU required!
+# Optimized for Hugging Face Gradio SDK
 
 torch
 torchvision
@@ -8,6 +8,7 @@ pillow
 numpy
 trimesh
 scipy
-gradio==4.44.1
-huggingface_hub<0.25
 requests
+# Gradio version is handled by README.md but including here for local parity
+gradio==5.16.0
+huggingface_hub
