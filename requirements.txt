@@ -5,3 +5,5 @@ trimesh
 pillow
 torchvision
 scipy
+pytz
+scikit-image
