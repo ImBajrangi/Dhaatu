@@ -12,3 +12,7 @@ accelerate
 transformers
 safetensors
 regex
+rembg
+onnxruntime
+huggingface_hub
+spaces

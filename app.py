@@ -1,16 +1,23 @@
+import os
+import tempfile
 import gradio as gr
 import torch
 import numpy as np
 import trimesh
 from core.inference import TrellisInferencePipeline
-import tempfile
-import os
+
+# Zero-GPU support
+try:
+    import spaces
+    _GPU_DECORATOR = spaces.GPU
+except ImportError:
+    def _GPU_DECORATOR(f): return f
 
 # Initialize the pipeline
-# Note: In a real HF space, weights would be pre-downloaded or cached
 device = "cuda" if torch.cuda.is_available() else "cpu"
 pipeline = TrellisInferencePipeline(device=device)
 
+@_GPU_DECORATOR
 def generate_3d(image):
     if image is None:
         return None, "Status: No image provided"
