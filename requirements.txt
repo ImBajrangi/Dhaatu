@@ -10,5 +10,5 @@ trimesh
 scipy
 requests
 gradio==5.5.0
-gradio-client==1.4.3
+gradio-client==1.4.2
 huggingface_hub
