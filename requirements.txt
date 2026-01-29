@@ -1,5 +1,5 @@
 # Dhaatu: Custom Image-to-3D Generator
-# Pinned Stable Version for Docker Isolation
+# Optimized for Native Hugging Face Gradio SDK
 
 torch
 torchvision
@@ -9,6 +9,6 @@ numpy
 trimesh
 scipy
 requests
-gradio==5.5.0
-gradio-client==1.4.2
+gradio
+gradio-client
 huggingface_hub

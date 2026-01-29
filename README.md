@@ -3,7 +3,7 @@ title: Dhaatu
 emoji: 🗿
 colorFrom: purple
 colorTo: indigo
-sdk: docker
+sdk: gradio
 app_file: app.py
 pinned: false
 license: apache-2.0
