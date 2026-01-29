@@ -3,26 +3,32 @@ title: Dhaatu
 emoji: 🗿
 colorFrom: purple
 colorTo: indigo
-sdk: docker
+sdk: gradio
+sdk_version: 5.15.0
+app_file: app.py
 pinned: false
 license: apache-2.0
-short_description: Professional 2D-to-3D Generation powered by TRELLIS
+short_description: Your Own Image-to-3D Generator - 100% Free
 ---
 
-# Dhaatu: Professional Image-to-3D Generator
+# 🗿 Dhaatu: Your Own Image-to-3D Generator
 
-**Powered by TRELLIS** - Generate production-ready 3D assets from single images.
+**100% Free • Runs on CPU • You Own It Completely**
+
+This is YOUR custom 3D mesh generator that uses depth estimation to create 3D models from single images.
 
 ## Features
-- **High-Fidelity Geometry**: Uses TRELLIS's Sparse Voxel VAE for detailed mesh generation
-- **PBR Textures**: Generates realistic materials that work in game engines
-- **GLB Export**: Ready-to-use assets with embedded textures
-- **Gaussian Splatting**: Optional high-quality point cloud export
+- **No GPU Required**: Works on free CPU-only Hugging Face Spaces
+- **Depth-Based 3D**: Uses Intel's DPT model for accurate depth estimation
+- **GLB Export**: Download 3D models ready for any 3D software
+- **Adjustable Settings**: Control depth scale and resolution
 
-## Usage
-1. Upload an image (background is auto-removed if no alpha channel)
-2. Click "Generate & Extract GLB"
-3. Download your production-ready 3D model
+## How It Works
+1. Upload any image
+2. The model estimates depth (what's close vs far)
+3. Depth is converted to a 3D mesh with colors from your image
+4. Download and use in Blender, Unity, or any 3D tool
 
 ## Credits
-- [TRELLIS](https://trellis3d.github.io/) by Microsoft Research
+- Depth estimation: [Intel DPT](https://huggingface.co/Intel/dpt-hybrid-midas)
+- Built with: Transformers, Trimesh, Gradio
