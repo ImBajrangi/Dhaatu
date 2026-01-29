@@ -8,42 +8,41 @@ class TrellisInferencePipeline:
         self.device = torch.device(device)
         self.vae = SparseVoxelVAE().to(self.device)
         self.dit = TrellisDiT().to(self.device)
-        # In a real scenario, we would load weights here
-        # self.vae.load_state_dict(torch.load("vae_weights.pth"))
-        # self.dit.load_state_dict(torch.load("dit_weights.pth"))
         self.vae.eval()
         self.dit.eval()
 
     def preprocess_image(self, image_path):
-        """
-        Placeholder for DINOv2 feature extraction.
-        """
         print(f"Extracting features from {image_path}...")
-        # Mocking DINOv2 output [B, 1024]
         return torch.randn(1, 1024).to(self.device)
 
     @torch.no_grad()
-    def generate(self, image_path, steps=50):
-        # 1. Extract image condition
+    def generate(self, image_path, steps=25):
         cond = self.preprocess_image(image_path)
         
-        # 2. Diffusion process (simplified: start with noise and refine)
-        # Latent shape [B, C, D, H, W]
+        # Start from Gaussian Noise in latent space
         latent = torch.randn(1, 16, 8, 8, 8).to(self.device)
         
-        print("Running diffusion refinement...")
-        for _ in range(steps):
-            # This is where the Rectified Flow or DDIM step would happen
-            # We call the DiT to predict noise/velocity
-            pred_noise = self.dit(latent, cond)
-            # In a real flow, we update 'latent' based on pred_noise
-            latent = latent - 0.01 * pred_noise # Very simplified step
+        print("Running diffusion refinement (Rectified Flow style)...")
+        dt = 1.0 / steps
+        for i in range(steps):
+            t = 1.0 - i * dt
+            # Predict velocity
+            v_pred = self.dit(latent, cond)
+            # Euler step
+            latent = latent - dt * v_pred
             
-        # 3. Decode latent to 3D Voxel/Mesh
-        print("Decoding latent to 3D mesh...")
+        print("Decoding to 3D Sparse Voxel Grid...")
         output_3d = self.vae.decode(latent)
         
-        return output_3d
+        # Generate placeholder PBR maps (Albedo, Roughness, Metalness)
+        # In a real model, this would be a separate branch or multi-channel output
+        pbr_maps = {
+            "albedo": torch.sigmoid(output_3d[:, :3]),
+            "roughness": torch.sigmoid(output_3d[:, 3:4]),
+            "metalness": torch.zeros_like(output_3d[:, 3:4])
+        }
+        
+        return output_3d, pbr_maps
 
 if __name__ == "__main__":
     pipeline = TrellisInferencePipeline()

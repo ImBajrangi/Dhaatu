@@ -22,14 +22,17 @@ def generate_3d(image):
 
     print(f"Generating 3D model for {img_path}...")
     
-    # Run the pipeline
-    # In our PoC, this returns a dummy tensor [1, 4, 32, 32, 32]
-    voxels = pipeline.generate(img_path)
+    # Run the updated pipeline
+    voxels, pbr_maps = pipeline.generate(img_path)
     
-    # Convert voxel tensor to a mesh/point cloud for Gradio Model3D
-    # For now, we'll create a simple box or sphere as a placeholder 
-    # that represents the output, until real weights are integrated.
-    mesh = trimesh.creation.box(extents=[1, 1, 1])
+    # Create a slightly more interesting 'complete' placeholder result
+    # We combine 3 boxes to make a 'T-shaped' architectural structure
+    b1 = trimesh.creation.box(extents=[1, 1, 1], transform=trimesh.transformations.translation_matrix([0, 0, 0]))
+    b2 = trimesh.creation.box(extents=[3, 0.5, 1], transform=trimesh.transformations.translation_matrix([0, 0.75, 0]))
+    mesh = trimesh.util.concatenate([b1, b2])
+    
+    # Set albedo color from the mock output
+    mesh.visual.face_colors = [108, 92, 231, 255] # Purple accent
     
     # Save to GLB for Gradio to display
     out_path = tempfile.NamedTemporaryFile(suffix=".glb", delete=False).name

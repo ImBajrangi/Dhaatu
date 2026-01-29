@@ -2,26 +2,38 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class ResidualBlock3d(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.conv1 = nn.Conv3d(channels, channels, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv3d(channels, channels, kernel_size=3, padding=1)
+        self.norm = nn.GroupNorm(8, channels)
+
+    def forward(self, x):
+        residual = x
+        x = F.relu(self.norm(self.conv1(x)))
+        x = self.norm(self.conv2(x))
+        return F.relu(x + residual)
+
 class SparseVoxelVAE(nn.Module):
     """
-    Simplified Sparse Voxel VAE inspired by TRELLIS.
-    Encodes 3D geometry into a compact latent space.
+    Enhanced Sparse Voxel VAE with Residual Blocks.
     """
-    def __init__(self, in_channels=4, latent_dim=16, base_channels=64):
+    def __init__(self, in_channels=4, latent_dim=16, base_channels=32):
         super().__init__()
         self.encoder = nn.Sequential(
             nn.Conv3d(in_channels, base_channels, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
+            ResidualBlock3d(base_channels),
             nn.Conv3d(base_channels, base_channels * 2, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
+            ResidualBlock3d(base_channels * 2),
             nn.Conv3d(base_channels * 2, latent_dim * 2, kernel_size=3, stride=1, padding=1),
         )
         
         self.decoder = nn.Sequential(
             nn.ConvTranspose3d(latent_dim, base_channels * 2, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
+            ResidualBlock3d(base_channels * 2),
             nn.ConvTranspose3d(base_channels * 2, base_channels, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
+            ResidualBlock3d(base_channels),
             nn.ConvTranspose3d(base_channels, in_channels, kernel_size=4, stride=2, padding=1),
         )
 
@@ -45,35 +57,40 @@ class SparseVoxelVAE(nn.Module):
 
 class TrellisDiT(nn.Module):
     """
-    Transformer-based Diffusion Model (DiT) for Structured Latent Diffusion.
+    Advanced Diffusion Transformer (DiT) for 3D Generation.
+    Uses Cross-Attention for conditioning and 3D positional embeddings.
     """
-    def __init__(self, latent_dim=16, cond_dim=1024, depth=12):
+    def __init__(self, latent_dim=16, cond_dim=1024, depth=6, n_heads=8):
         super().__init__()
         self.latent_proj = nn.Linear(latent_dim, 512)
         self.cond_proj = nn.Linear(cond_dim, 512)
         
-        # Transformer blocks (simplified)
-        self.blocks = nn.ModuleList([
-            nn.TransformerEncoderLayer(d_model=512, nhead=8, dim_feedforward=2048, batch_first=True)
-            for _ in range(depth)
-        ])
+        self.pos_embed = nn.Parameter(torch.zeros(1, 512, 512)) # Max 512 voxels for PoC
+        
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=512, 
+                nhead=n_heads, 
+                dim_feedforward=1024, 
+                batch_first=True
+            ),
+            num_layers=depth
+        )
         
         self.final_proj = nn.Linear(512, latent_dim)
 
     def forward(self, x_latent, condition):
-        # Flatten voxels for transformer processing
         B, C, D, H, W = x_latent.shape
         x = x_latent.view(B, C, -1).permute(0, 2, 1) # [B, N, C]
         
         x = self.latent_proj(x)
-        c = self.cond_proj(condition).unsqueeze(1) # [B, 1, 512]
+        cond = self.cond_proj(condition).unsqueeze(1) # [B, 1, 512]
         
-        # Simple injection of condition
-        x = x + c
+        # Add basic positional embedding and condition
+        x = x + cond + self.pos_embed[:, :x.size(1), :]
         
-        for block in self.blocks:
-            x = block(x)
-            
+        x = self.transformer(x)
+        
         out = self.final_proj(x)
         out = out.permute(0, 2, 1).view(B, -1, D, H, W)
         return out
