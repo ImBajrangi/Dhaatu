@@ -9,7 +9,6 @@ import torch
 from transformers import DPTImageProcessor, DPTForDepthEstimation
 import trimesh
 
-
 class DepthTo3DPipeline:
     """
     Custom pipeline that converts images to 3D using depth estimation.
