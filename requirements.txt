@@ -7,3 +7,8 @@ torchvision
 scipy
 pytz
 scikit-image
+diffusers
+accelerate
+transformers
+safetensors
+regex
