@@ -87,6 +87,6 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         outputs=[model_viewer, download_file, status_text]
     )
 
-
-
-# In Hugging Face Spaces, the demo is launched automatically
+if __name__ == "__main__":
+    print("Starting Dhaatu - Your Own Image-to-3D Generator...")
+    demo.launch(server_name="0.0.0.0", server_port=7860)
