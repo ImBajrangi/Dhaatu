@@ -27,39 +27,49 @@ def generate_3d(image):
         image.save(tmp.name)
         img_path = tmp.name
 
-    print(f"Generating Professional 3D Asset for {img_path}...")
+    # Try Tripo3D Cloud API first (best quality)
+    from core.tripo_api import tripo_client
     
-    # Run the professional Hunyuan3D-2.1 pipeline
+    if tripo_client.is_configured():
+        print("Using Tripo3D Cloud API for professional 3D generation...")
+        result, error = tripo_client.generate(img_path)
+        
+        if result and os.path.exists(result):
+            return result, "✅ Production-grade 3D model generated via Tripo3D Cloud!"
+        else:
+            print(f"Tripo3D API failed: {error}")
+    else:
+        print("TRIPO_API_KEY not set. Using local fallback...")
+    
+    # Fallback to local model (limited quality)
+    print(f"Falling back to local generation for {img_path}...")
     result, _ = pipeline.generate(img_path)
     
     if isinstance(result, str) and os.path.exists(result):
-        status = "✅ Successfully generated professional 3D asset using Hunyuan3D-2.1!"
-        return result, status
+        return result, "⚠️ Generated using local model (set TRIPO_API_KEY for pro quality)"
     
-    # Fallback to PoC cube if professional generation fails locally
+    # Ultimate fallback: placeholder cube
     b1 = trimesh.creation.box(extents=[1, 1, 1])
     mesh = trimesh.util.concatenate([b1])
     out_path = tempfile.NamedTemporaryFile(suffix=".obj", delete=False).name
     mesh.export(out_path)
     
-    error_msg = pipeline.real_model_error if hasattr(pipeline, 'real_model_error') else "Resource limit exceeded"
-    status = f"⚠️ Mode: Local Lite (Reason: {error_msg})"
-    return out_path, status
+    return out_path, "⚠️ Placeholder mode: Set TRIPO_API_KEY for real results"
 
 # Professional Gradio Interface
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# Dhaatu Professional: Image-to-3D Asset Factory")
-    gr.Markdown("Transform high-resolution images into production-ready 3D models using **Hunyuan3D-2.1**.")
+    gr.Markdown("# Dhaatu: Professional Image-to-3D Generator")
+    gr.Markdown("**Powered by Tripo3D Cloud** - Generate production-ready 3D models from images.")
+    gr.Markdown("*Set `TRIPO_API_KEY` secret for professional results, or use local fallback.*")
     
     with gr.Row():
         with gr.Column(scale=1):
             input_img = gr.Image(type="pil", label="Input Image")
-            run_btn = gr.Button("🚀 Generate Production 3D Model", variant="primary")
-            gr.Examples(examples=["demo/logo_example.png", "demo/char_example.png"], inputs=input_img)
+            run_btn = gr.Button("🚀 Generate 3D Model", variant="primary")
         
         with gr.Column(scale=2):
-            status_out = gr.Markdown("Status: Initialize Pipeline...")
-            output_3d = gr.Model3D(label="3D Production Viewer", clear_color=(0,0,0,0))
+            status_out = gr.Markdown("Status: Ready")
+            output_3d = gr.Model3D(label="3D Model Viewer", clear_color=(0.1,0.1,0.1,1))
             
     run_btn.click(
         fn=generate_3d, 
