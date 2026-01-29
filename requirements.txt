@@ -1,5 +1,5 @@
 # Dhaatu: Custom Image-to-3D Generator
-# Final Stable Pinning for HF SDK
+# Optimized for Hugging Face Native Environment
 
 torch
 torchvision
@@ -9,6 +9,4 @@ numpy
 trimesh
 scipy
 requests
-gradio==4.44.1
-gradio-client==1.3.0
-huggingface_hub<0.25
+huggingface_hub
