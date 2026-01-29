@@ -9,4 +9,4 @@ numpy
 trimesh
 scipy
 gradio==4.44.1
-huggingface_hub
+huggingface_hub<0.25
