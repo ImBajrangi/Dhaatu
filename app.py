@@ -20,6 +20,24 @@ MAX_SEED = np.iinfo(np.int32).max
 TMP_DIR = '/tmp/dhaatu_sessions'
 os.makedirs(TMP_DIR, exist_ok=True)
 
+# Global pipeline (will be loaded lazily inside GPU function)
+pipeline = None
+
+def get_pipeline():
+    """Lazy load the pipeline only when GPU is available."""
+    global pipeline
+    if pipeline is None:
+        print("Loading TRELLIS pipeline...")
+        pipeline = TrellisImageTo3DPipeline.from_pretrained("JeffreyXiang/TRELLIS-image-large")
+        pipeline.cuda()
+        try:
+            pipeline.preprocess_image(Image.fromarray(np.zeros((512, 512, 3), dtype=np.uint8)))
+        except:
+            pass
+        print("Pipeline loaded successfully!")
+    return pipeline
+
+
 
 def start_session(req: gr.Request):
     user_dir = os.path.join(TMP_DIR, str(req.session_hash))
@@ -33,8 +51,10 @@ def end_session(req: gr.Request):
 
 def preprocess_image(image: Image.Image) -> Image.Image:
     """Preprocess the input image for 3D generation."""
-    processed_image = pipeline.preprocess_image(image)
+    pipe = get_pipeline()
+    processed_image = pipe.preprocess_image(image)
     return processed_image
+
 
 
 def pack_state(gs: Gaussian, mesh: MeshExtractResult) -> dict:
@@ -95,9 +115,14 @@ def generate_and_extract_glb(
 ) -> Tuple[dict, str, str, str]:
     """Generate 3D model from image and extract GLB file."""
     user_dir = os.path.join(TMP_DIR, str(req.session_hash))
+    os.makedirs(user_dir, exist_ok=True)
+    
+    # Get pipeline (lazy load on first request)
+    pipe = get_pipeline()
     
     # Generate 3D model using TRELLIS pipeline
-    outputs = pipeline.run(
+    outputs = pipe.run(
+
         image,
         seed=seed,
         formats=["gaussian", "mesh"],
@@ -245,10 +270,5 @@ with gr.Blocks(delete_cache=(600, 600), theme=gr.themes.Soft()) as demo:
 
 # Launch
 if __name__ == "__main__":
-    pipeline = TrellisImageTo3DPipeline.from_pretrained("JeffreyXiang/TRELLIS-image-large")
-    pipeline.cuda()
-    try:
-        pipeline.preprocess_image(Image.fromarray(np.zeros((512, 512, 3), dtype=np.uint8)))
-    except:
-        pass
+    # Pipeline is loaded lazily on first request (inside GPU function)
     demo.launch()
