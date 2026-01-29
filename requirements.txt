@@ -1,5 +1,5 @@
 torch
-gradio
+gradio==5.15.0
 numpy
 trimesh
 pillow
@@ -14,5 +14,5 @@ safetensors
 regex
 rembg
 onnxruntime
-huggingface_hub
+huggingface_hub==0.28.1
 spaces
