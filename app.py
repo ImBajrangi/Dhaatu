@@ -12,7 +12,7 @@ from PIL import Image
 from core.depth_to_3d import pipeline
 
 
-def generate_3d(image, depth_scale, resolution):
+def generate_3d(image, depth_scale, resolution, simplify_factor):
     """Generate 3D mesh from input image."""
     if image is None:
         return None, None, "❌ Please upload an image"
@@ -26,7 +26,8 @@ def generate_3d(image, depth_scale, resolution):
         mesh = pipeline.generate(
             image, 
             depth_scale=depth_scale,
-            output_resolution=resolution
+            output_resolution=resolution,
+            simplify_factor=simplify_factor
         )
         
         # Export to GLB
@@ -37,6 +38,8 @@ def generate_3d(image, depth_scale, resolution):
         return glb_path, glb_path, status
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return None, None, f"❌ Error: {str(e)}"
 
 
@@ -64,6 +67,10 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                     minimum=128, maximum=512, value=256, step=64,
                     label="Resolution (higher = more detail, slower)"
                 )
+                simplify_factor = gr.Slider(
+                    minimum=0.01, maximum=1.0, value=0.1, step=0.05,
+                    label="Mesh Quality (lower % = smaller/faster files)"
+                )
             
             generate_btn = gr.Button("🚀 Generate 3D Model", variant="primary", size="lg")
             
@@ -78,12 +85,13 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     - **Best results**: Objects with clear foreground/background separation
     - **Depth Scale**: Lower = flatter, Higher = more 3D depth
     - **Resolution**: 256 is good balance, 512 for more detail
+    - **Mesh Quality**: 0.1 (10%) is usually sufficient and loads fast in the viewer
     """)
     
     # Event handlers
     generate_btn.click(
         fn=generate_3d,
-        inputs=[input_image, depth_scale, resolution],
+        inputs=[input_image, depth_scale, resolution, simplify_factor],
         outputs=[model_viewer, download_file, status_text]
     )
 

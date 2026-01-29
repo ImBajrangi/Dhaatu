@@ -70,7 +70,7 @@ class DepthTo3DPipeline:
             image: Original RGB image for texture
             depth: Depth map (normalized 0-1)
             depth_scale: How much to extrude the depth (higher = more 3D)
-            simplify_factor: Reduce mesh complexity (0.1 = keep 10% of faces)
+            simplify_factor: Keep percentage (0.1 = keep 10% of faces)
         """
         height, width = depth.shape
         
@@ -86,15 +86,17 @@ class DepthTo3DPipeline:
         vertices = np.stack([xx, -yy, zz], axis=-1).reshape(-1, 3)
         
         # Create faces (triangulate the grid)
-        faces = []
-        for i in range(height - 1):
-            for j in range(width - 1):
-                idx = i * width + j
-                # Two triangles per quad
-                faces.append([idx, idx + width, idx + 1])
-                faces.append([idx + 1, idx + width, idx + width + 1])
+        # Using a faster method for Grid creation
+        i = np.arange(height - 1)
+        j = np.arange(width - 1)
+        ii, jj = np.meshgrid(i, j, indexing='ij')
         
-        faces = np.array(faces)
+        idx = ii * width + jj
+        
+        # Two triangles per quad
+        f1 = np.stack([idx, idx + width, idx + 1], axis=-1).reshape(-1, 3)
+        f2 = np.stack([idx + 1, idx + width, idx + width + 1], axis=-1).reshape(-1, 3)
+        faces = np.vstack([f1, f2])
         
         # Get vertex colors from image
         img_array = np.array(image.resize((width, height)))
@@ -113,15 +115,21 @@ class DepthTo3DPipeline:
         )
         
         # Simplify mesh to reduce file size
-        if simplify_factor < 1.0:
+        if 0 < simplify_factor < 1.0:
             target_faces = int(len(mesh.faces) * simplify_factor)
-            if target_faces > 100:
-                mesh = mesh.simplify_quadric_decimation(target_faces)
+            # Ensure target_faces is at least a reasonable number
+            target_faces = max(target_faces, 1000)
+            if len(mesh.faces) > target_faces:
+                try:
+                    # simplify_quadric_decimation is the most stable
+                    mesh = mesh.simplify_quadric_decimation(target_faces)
+                except Exception as e:
+                    print(f"Simplification warning: {e}")
         
         return mesh
     
     def generate(self, image: Image.Image, depth_scale: float = 0.5, 
-                 output_resolution: int = 256) -> trimesh.Trimesh:
+                 output_resolution: int = 256, simplify_factor: float = 0.1) -> trimesh.Trimesh:
         """
         Full pipeline: Image -> Depth -> 3D Mesh
         
@@ -129,20 +137,20 @@ class DepthTo3DPipeline:
             image: Input PIL Image
             depth_scale: Depth extrusion amount (0.1-1.0)
             output_resolution: Resolution for processing (lower = faster)
+            simplify_factor: How much to simplify (0.1-1.0)
         """
         # Resize for processing
-        original_size = image.size
         image_resized = image.resize((output_resolution, output_resolution))
         
         # Convert to RGB if needed
         if image_resized.mode != 'RGB':
             image_resized = image_resized.convert('RGB')
         
-        print("Estimating depth...")
+        print(f"Estimating depth at {output_resolution}x{output_resolution}...")
         depth = self.estimate_depth(image_resized)
         
-        print("Generating 3D mesh...")
-        mesh = self.depth_to_mesh(image_resized, depth, depth_scale=depth_scale)
+        print(f"Generating 3D mesh (simplify={simplify_factor})...")
+        mesh = self.depth_to_mesh(image_resized, depth, depth_scale=depth_scale, simplify_factor=simplify_factor)
         
         print("3D mesh generated successfully!")
         return mesh
