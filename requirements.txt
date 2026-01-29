@@ -16,3 +16,10 @@ rembg
 onnxruntime
 huggingface_hub==0.28.1
 spaces
+einops
+omegaconf
+pytorch-lightning
+imageio
+imageio-ffmpeg
+librosa
+pymatting
