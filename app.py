@@ -41,7 +41,7 @@ def generate_3d(image):
     return out_path
 
 # Define Gradio Interface
-with gr.Blocks(theme=gr.themes.Soft()) as demo:
+with gr.Blocks() as demo:
     gr.Markdown("# 3DGen AI: Image-to-3D Generation")
     gr.Markdown("Transform 2D images into high-quality 3D assets using Structured Latent Diffusion.")
     
@@ -56,4 +56,4 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     run_btn.click(fn=generate_3d, inputs=input_img, outputs=output_3d)
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(theme=gr.themes.Soft())
