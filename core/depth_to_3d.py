@@ -115,16 +115,20 @@ class DepthTo3DPipeline:
         )
         
         # Simplify mesh to reduce file size
-        if 0 < simplify_factor < 1.0:
-            target_faces = int(len(mesh.faces) * simplify_factor)
-            # Ensure target_faces is at least a reasonable number
-            target_faces = max(target_faces, 1000)
-            if len(mesh.faces) > target_faces:
-                try:
-                    # simplify_quadric_decimation is the most stable
+        if 0.01 <= simplify_factor < 1.0:
+            try:
+                # Calculate target face count
+                current_faces = len(mesh.faces)
+                target_faces = int(current_faces * simplify_factor)
+                
+                # Only simplify if we have a significant number of faces
+                # and target is strictly less than current
+                if current_faces > 1000 and target_faces < current_faces:
+                    print(f"Simplifying mesh from {current_faces} to {target_faces} faces...")
                     mesh = mesh.simplify_quadric_decimation(target_faces)
-                except Exception as e:
-                    print(f"Simplification warning: {e}")
+            except Exception as e:
+                print(f"⚠️ Mesh simplification failed: {e}. Returning original mesh.")
+                # We return the mesh anyway, it just might be a bit larger
         
         return mesh
     
