@@ -1,6 +1,6 @@
 ---
 title: Dhaatu
-emoji: 🏗️
+emoji: 🗿
 colorFrom: purple
 colorTo: indigo
 sdk: gradio
@@ -8,16 +8,23 @@ sdk_version: 5.15.0
 app_file: app.py
 pinned: false
 license: apache-2.0
-short_description: Professional 2D-to-3D Generation powered by Hunyuan3D-2.1
-thumbnail: >-
-  https://cdn-uploads.huggingface.co/production/uploads/6911ec86f3b8da533d6e29f5/ItqRL_1_iQ2z4pcRZ6K91.png
+short_description: Professional 2D-to-3D Generation powered by TRELLIS
 ---
 
-# 3DGen AI: 2D to 3D Generation
+# Dhaatu: Professional Image-to-3D Generator
 
-This Space hosts a state-of-the-art 3D generation model inspired by TRELLIS and Hunyuan3D.
+**Powered by TRELLIS** - Generate production-ready 3D assets from single images.
 
 ## Features
--   Fast high-fidelity 3D reconstruction.
--   PBR material support (coming soon).
--   Structured Latent Diffusion architecture.
+- **High-Fidelity Geometry**: Uses TRELLIS's Sparse Voxel VAE for detailed mesh generation
+- **PBR Textures**: Generates realistic materials that work in game engines
+- **GLB Export**: Ready-to-use assets with embedded textures
+- **Gaussian Splatting**: Optional high-quality point cloud export
+
+## Usage
+1. Upload an image (background is auto-removed if no alpha channel)
+2. Click "Generate & Extract GLB"
+3. Download your production-ready 3D model
+
+## Credits
+- [TRELLIS](https://trellis3d.github.io/) by Microsoft Research
