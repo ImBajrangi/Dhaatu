@@ -10,21 +10,34 @@ import torch
 class TrellisInferencePipeline:
     def __init__(self, device="cpu"):
         self.device = torch.device(device)
-        print(f"Initializing Real 3D Model (Shap-E) on {self.device}...")
+        self.pipe = None
+        self.real_model_error = None
+        print(f"Inference pipeline initialized on {self.device}. Real model will load on first demand.")
+
+    def _load_model(self):
+        if self.pipe is not None:
+            return True
+            
+        print(f"Attempting to load Real 3D Model (Shap-E) on {self.device}...")
         try:
             self.pipe = ShapEImg2ImgPipeline.from_pretrained(
-                "openai/shap-e-img2img"
+                "openai/shap-e-img2img",
+                local_files_only=False
             )
             self.pipe.to(self.device)
-            self.real_model = True
+            self.real_model_error = None
+            return True
         except Exception as e:
-            print(f"Failed to load real model: {e}. Falling back to PoC logic.")
-            self.real_model = False
+            self.real_model_error = str(e)
+            print(f"Failed to load real model: {e}")
+            return False
 
     @torch.no_grad()
     def generate(self, image_path, steps=25):
-        if not self.real_model:
+        # Attempt to load if not already loaded
+        if not self._load_model():
             # Fallback for low-memory/no-internet
+            print(f"Falling back to PoC logic due to: {self.real_model_error}")
             from core.models import SparseVoxelVAE
             dummy_vae = SparseVoxelVAE().to(self.device).eval()
             latent = torch.randn(1, 16, 8, 8, 8).to(self.device)

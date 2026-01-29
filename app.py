@@ -13,7 +13,7 @@ pipeline = TrellisInferencePipeline(device=device)
 
 def generate_3d(image):
     if image is None:
-        return None
+        return None, "Status: No image provided"
     
     # Save input image to temp file for processing
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -27,19 +27,23 @@ def generate_3d(image):
     
     # If result is already a path (from Shap-E), return it
     if isinstance(result, str) and os.path.exists(result):
-        return result
+        status = "✅ Successfully generated 3D model using OpenAI Shap-E!"
+        return result, status
     
     # Fallback mesh generation (if real model failed)
     b1 = trimesh.creation.box(extents=[1, 1, 1])
     mesh = trimesh.util.concatenate([b1])
-    out_path = tempfile.NamedTemporaryFile(suffix=".glb", delete=False).name
+    out_path = tempfile.NamedTemporaryFile(suffix=".obj", delete=False).name
     mesh.export(out_path)
-    return out_path
+    
+    error_msg = pipeline.real_model_error if hasattr(pipeline, 'real_model_error') else "Weight download incomplete"
+    status = f"⚠️ Fallback Mode: Generated placeholder box. (Reason: {error_msg})"
+    return out_path, status
 
 # Define Gradio Interface
 with gr.Blocks() as demo:
     gr.Markdown("# 3DGen AI: Image-to-3D Generation")
-    gr.Markdown("Transform 2D images into high-quality 3D assets using Structured Latent Diffusion.")
+    gr.Markdown("Transform 2D images into high-quality 3D assets using OpenAI Shap-E.")
     
     with gr.Row():
         with gr.Column():
@@ -47,9 +51,14 @@ with gr.Blocks() as demo:
             run_btn = gr.Button("Generate 3D Model", variant="primary")
         
         with gr.Column():
+            status_out = gr.Markdown("Status: Ready")
             output_3d = gr.Model3D(label="3D Model Viewer")
             
-    run_btn.click(fn=generate_3d, inputs=input_img, outputs=output_3d)
+    run_btn.click(
+        fn=generate_3d, 
+        inputs=input_img, 
+        outputs=[output_3d, status_out]
+    )
 
 if __name__ == "__main__":
     demo.launch(theme=gr.themes.Soft())
