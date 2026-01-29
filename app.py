@@ -33,10 +33,6 @@ def generate_3d(image, depth_scale, resolution):
         glb_path = tempfile.NamedTemporaryFile(suffix=".glb", delete=False).name
         mesh.export(glb_path)
         
-        # Also export OBJ for compatibility
-        obj_path = tempfile.NamedTemporaryFile(suffix=".obj", delete=False).name
-        mesh.export(obj_path)
-        
         status = f"✅ Generated 3D model with {len(mesh.vertices)} vertices and {len(mesh.faces)} faces"
         return glb_path, glb_path, status
         
@@ -73,10 +69,10 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             
         with gr.Column(scale=1):
             status_text = gr.Markdown("Status: Ready to generate!")
-            model_viewer = gr.Model3D(label="🎮 3D Model Viewer", clear_color=(0.1, 0.1, 0.1, 1))
-            download_btn = gr.DownloadButton(label="📥 Download GLB", interactive=False)
+            model_viewer = gr.Model3D(label="🎮 3D Model Viewer")
+            download_file = gr.File(label="📥 Download GLB")
     
-    # Examples
+    # Tips
     gr.Markdown("### 💡 Tips")
     gr.Markdown("""
     - **Best results**: Objects with clear foreground/background separation
@@ -88,14 +84,11 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     generate_btn.click(
         fn=generate_3d,
         inputs=[input_image, depth_scale, resolution],
-        outputs=[model_viewer, download_btn, status_text]
-    ).then(
-        lambda: gr.Button(interactive=True),
-        outputs=[download_btn]
+        outputs=[model_viewer, download_file, status_text]
     )
 
 
 # Launch
 if __name__ == "__main__":
     print("Starting Dhaatu - Your Own Image-to-3D Generator...")
-    demo.launch()
+    demo.launch(ssr_mode=False)

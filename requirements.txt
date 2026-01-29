@@ -8,5 +8,5 @@ pillow
 numpy
 trimesh
 scipy
-gradio
+gradio==4.44.1
 huggingface_hub
