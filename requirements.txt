@@ -1,0 +1,7 @@
+torch
+gradio
+numpy
+trimesh
+pillow
+torchvision
+scipy
