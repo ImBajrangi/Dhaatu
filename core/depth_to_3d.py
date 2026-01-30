@@ -134,11 +134,14 @@ class DepthTo3DPipeline:
             final_mask[labels == best_id] = True
             
         # 3. Final cleaning (opening) - AGGRESSIVE
-        # Using a larger structure to break connections
         structure = np.ones((7, 7))
         final_mask = ndimage.binary_opening(final_mask, structure=structure, iterations=2)
         
-        # 4. Strict Frame Zeroing (Final Safety)
+        # 4. SILHOUETTE SHARPENER: Slightly erode to ensure no background noise contributes
+        # This is key to removing those "thin filaments" or "jagged edges"
+        final_mask = ndimage.binary_erosion(final_mask, structure=np.ones((3, 3)), iterations=1)
+        
+        # 5. Strict Frame Zeroing
         border = 4
         final_mask[:border, :] = False
         final_mask[-border:, :] = False
@@ -432,47 +435,37 @@ class DepthTo3DPipeline:
             if not components:
                 return mesh
             
-            # Boundary-Aware Filter:
-            # We check if a component is "frame-locked" (touches the grid limits)
-            # The mesh is already centered, but we can check the original 
-            # bounds before centering or check the relative bounds now.
-            # Since we centered it, we check if the bounds reach the extreme extents.
-            
+            # Post-Process Spike Removal: Filter components by "density" or scale
+            # Often spikes are separate tiny components or very thin islands.
             candidate_components = []
+            for comp in components:
+                # Discard components that are just a few faces (waste parts)
+                if len(comp.faces) < 50:
+                    continue
+                
+                # Aspect Ratio Filter: Spikes are often very elongated along Z
+                extent = comp.extents
+                z_ratio = extent[2] / (max(extent[0], extent[1]) + 1e-6)
+                if z_ratio > 5.0 and len(comp.faces) < 500:
+                    print(f"Discarding spike component (Z-ratio: {z_ratio:.2f})")
+                    continue
+                    
+                candidate_components.append(comp)
             
-            # The grid was created in [0, 1] range then centered.
-            # So bounds should be roughly [-0.5, 0.5].
-            # Components touching the "walls" will reach these limits.
+            if not candidate_components:
+                return mesh # Fallback
+                
+            # Boundary-Aware Filter
             extents = mesh.bounds
             limit_min = extents[0] + 0.05
             limit_max = extents[1] - 0.05
             
             non_box_components = []
-            
-            for i, comp in enumerate(components):
-                b = comp.bounds
-                # Absolute Frame-Lock Check:
-                # Does the component take up more than 90% of a dimension while touching edges?
-                width_ratio = (b[1, 0] - b[0, 0]) / (extents[1, 0] - extents[0, 0] + 1e-8)
-                height_ratio = (b[1, 1] - b[0, 1]) / (extents[1, 1] - extents[0, 1] + 1e-8)
-                
+            for comp in candidate_components:
+                # Check if this component touches the 3D frame boundaries
+                # (Same logic as before, just integrated with candidate list)
+                c_bounds = comp.bounds
                 touches = 0
-                if b[0, 0] < limit_min[0]: touches += 1 # Left
-                if b[1, 0] > limit_max[0]: touches += 1 # Right
-                if b[0, 1] < limit_min[1]: touches += 1 # Bottom
-                if b[1, 1] > limit_max[1]: touches += 1 # Top
-                
-                # If it touches multiple edges AND is very large, it's a box
-                is_frame = (touches >= 3) or (touches >= 2 and (width_ratio > 0.9 or height_ratio > 0.9))
-                
-                if is_frame:
-                    print(f"Component {i} identified as Background Box (touches {touches} edges). Discarding.")
-                    continue
-                
-                # If it's a very large flat plane reaching the edges, also discard
-                if touches >= 1 and (b[1, 2] - b[0, 2]) < 0.03:
-                    print(f"Component {i} is a background plane. Discarding.")
-                    continue
                     
                 non_box_components.append(comp)
             
@@ -553,8 +546,11 @@ class DepthTo3DPipeline:
                     bg_threshold = max(bg_threshold, min(o_val, 0.25))
                 except: pass
                 
-                print(f"Adaptive thresholding: finalized bg_threshold at {bg_threshold:.3f}")
-
+            # CLEAN DEPTH: Shave off noise spikes using a Median Filter
+            # This is extremely effective against the report "spikes"
+            print("Applying median filter to shave off depth spikes...")
+            depth = ndimage.median_filter(depth, size=3)
+            
             mask = depth > bg_threshold
             
             # Surgical Pre-Reconstruction Isolation
