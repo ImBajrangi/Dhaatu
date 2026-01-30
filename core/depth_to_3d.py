@@ -153,8 +153,10 @@ class DepthTo3DPipeline:
             back_vertices[:, 2] = depth_scale + thickness
             
             # Boundary edges connect front to back
-            # trimesh can find boundary edges for us
-            boundary_edges = mesh.outline().edges_sorted
+            # We find edges that only belong to one face
+            edges = mesh.edges_sorted
+            unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
+            boundary_edges = unique_edges[counts == 1]
             
             front_v_count = len(vertices)
             
