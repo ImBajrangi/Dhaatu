@@ -12,7 +12,7 @@ from PIL import Image
 from core.depth_to_3d import pipeline
 
 
-def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold, volumetric, thickness, smooth_iterations, depth_boost, aggressive_cut, method):
+def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold, volumetric, thickness, smooth_iterations, depth_boost, aggressive_cut, method, isolate_main_object):
     """Generate 3D mesh from input image."""
     if image is None:
         return None, None, "❌ Please upload an image"
@@ -36,7 +36,8 @@ def generate_3d(image, depth_scale, resolution, simplify_factor, remove_backgrou
             smooth_iterations=smooth_iterations,
             depth_boost=depth_boost,
             aggressive_cut=aggressive_cut,
-            method=method
+            method=method,
+            isolate_main_object=isolate_main_object
         )
         
         # Export to GLB
@@ -119,10 +120,13 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 with gr.Accordion("✨ Advanced Quality", open=False):
                     depth_boost = gr.Slider(
                         minimum=1.0, maximum=3.0, value=1.2, step=0.1,
-                        label="Depth Boost (Contrast)"
+                        label="🚀 Depth Boost (Contrast)"
                     )
                     aggressive_cut = gr.Checkbox(
-                        value=True, label="✂️ Aggressive Edge Cut (Cleaner isolation)"
+                        value=True, label="🧼 Smart Mask Clean (Removes noise)"
+                    )
+                    isolate_main_object = gr.Checkbox(
+                        value=True, label="🎯 Isolate Main Object (Delete extra parts)"
                     )
             
             generate_btn = gr.Button("🚀 Generate 3D Model", variant="primary", size="lg")
@@ -147,7 +151,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         inputs=[
             input_image, depth_scale, resolution, simplify_factor, 
             remove_background, bg_threshold, volumetric, thickness, 
-            smooth_iterations, depth_boost, aggressive_cut, method
+            smooth_iterations, depth_boost, aggressive_cut, method, isolate_main_object
         ],
         outputs=[model_viewer, download_file, status_text]
     )

@@ -9,7 +9,8 @@ import torch
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 import trimesh
 import os
-from skimage import measure
+from skimage import measure, morphology
+import scipy.ndimage as ndimage
 
 # Disable transformers background safetensors conversion check which can cause ReadTimeouts
 os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
@@ -60,10 +61,25 @@ class DepthTo3DPipeline:
             align_corners=False,
         ).squeeze()
         
-        depth = depth.cpu().numpy()
+        # Normalize depth
         depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
         
-        return depth
+        return depth.cpu().numpy()
+
+    def clean_mask(self, mask: np.ndarray, iterations: int = 1) -> np.ndarray:
+        """Perform morphological opening to remove small noise/filaments."""
+        print(f"Cleaning mask with morphological operations ({iterations} iterations)...")
+        # Ensure mask is boolean
+        mask_bool = mask.astype(bool)
+        
+        # Remove small objects
+        mask_clean = morphology.remove_small_objects(mask_bool, min_size=64)
+        
+        # Opening (erosion followed by dilation) to remove thin connections
+        structure = np.ones((3, 3))
+        mask_clean = ndimage.binary_opening(mask_clean, structure=structure, iterations=iterations)
+        
+        return mask_clean.astype(float)
     
     def smooth_depth_map(self, depth: np.ndarray, iterations: int = 1) -> np.ndarray:
         """Apply a simple box blur to smooth the depth map."""
@@ -269,8 +285,12 @@ class DepthTo3DPipeline:
         z_max_idx = grid_res
         z_scale = z_max_idx / (depth_scale + thickness + 1e-8)
         
-        for y in range(grid_res):
-            for x in range(grid_res):
+        # Boundary Trimming: We ignore the very edges of the grid (1-pixel border inside padding)
+        # to prevent background "walls" from forming at the image boundaries.
+        trim = 1
+        
+        for y in range(trim, grid_res - trim):
+            for x in range(trim, grid_res - trim):
                 d = depth_map[y, x]
                 if d <= 0: continue # Skip masked background
                 
@@ -280,6 +300,9 @@ class DepthTo3DPipeline:
                 z_start = int(z_front * z_scale) + 1
                 z_end = int(z_back * z_scale) + 1
                 
+                # Further boundary check: if d is close to 0 but we passed the mask, 
+                # maybe force it to zero if it's very close to the trim border?
+                # For now, traditional fill.
                 grid[y+1, x+1, z_start:z_end+1] = 1.0
         
         print("Running Marching Cubes...")
@@ -316,13 +339,31 @@ class DepthTo3DPipeline:
             
         mesh.vertices -= mesh.bounds.mean(axis=0) # Center
         return mesh
+
+    def isolate_largest_component(self, mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+        """Keep only the largest connected component of the mesh."""
+        print("Isolating main object (removing floating artifacts)...")
+        try:
+            components = mesh.split(only_watertight=False)
+            if not components:
+                return mesh
+            
+            # Find the component with the largest volume or surface area
+            # Volume is better but can be zero for non-watertight meshes
+            largest_component = max(components, key=lambda m: m.area)
+            print(f"Isolated main object: {len(largest_component.vertices)} vertices (removed {len(components)-1} fragments)")
+            return largest_component
+        except Exception as e:
+            print(f"⚠️ Isolation failed: {e}. Returning full mesh.")
+            return mesh
     
     def generate(self, image: Image.Image, depth_scale: float = 0.5, 
                  output_resolution: int = 256, simplify_factor: float = 0.1,
                  remove_background: bool = True, bg_threshold: float = 0.1,
                  volumetric: bool = True, thickness: float = 0.2,
                  smooth_iterations: int = 2, depth_boost: float = 1.2,
-                 aggressive_cut: bool = True, method: str = "Volumetric (Advanced)") -> trimesh.Trimesh:
+                 aggressive_cut: bool = True, method: str = "Volumetric (Advanced)",
+                 isolate_main_object: bool = True) -> trimesh.Trimesh:
         """
         Full pipeline: Image -> Depth -> 3D Mesh
         
@@ -339,6 +380,7 @@ class DepthTo3DPipeline:
             depth_boost: Multiply depth values to enhance detail (1.0-2.0)
             aggressive_cut: Whether to be more aggressive with background removal
             method: "Surface Extrusion" or "Volumetric (Advanced)"
+            isolate_main_object: Whether to keep only the largest connected part
         """
         # Resize for processing
         image_resized = image.resize((output_resolution, output_resolution))
@@ -359,12 +401,18 @@ class DepthTo3DPipeline:
         print("Smoothing depth map...")
         depth = self.smooth_depth_map(depth, iterations=1)
         
+        # Mask the depth map
+        if remove_background:
+            mask = depth > bg_threshold
+            
+            # Clean the mask if aggressive_cut is on (acting as "Smart Cleanup")
+            if aggressive_cut:
+                mask = self.clean_mask(mask, iterations=1)
+                
+            depth[~mask.astype(bool)] = 0
+            
         if "Volumetric" in method:
             print(f"Generating high-fidelity 3D model using Marching Cubes...")
-            # For Marching Cubes, we mask the depth map first if background removal is on
-            if remove_background:
-                depth[depth < bg_threshold] = 0
-                
             mesh = self.depth_to_volumetric_mesh(
                 image_resized,
                 depth,
@@ -388,6 +436,10 @@ class DepthTo3DPipeline:
                 aggressive_cut=aggressive_cut
             )
         
+        # Isolate main object if requested
+        if isolate_main_object:
+            mesh = self.isolate_largest_component(mesh)
+            
         # Final simplification (if not already simplified in depth_to_mesh)
         if 0.01 <= simplify_factor < 1.0:
             mesh = self.simplify_quadric_decimation(mesh, simplify_factor)
