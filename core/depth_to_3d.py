@@ -9,7 +9,7 @@ import torch
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 import trimesh
 import os
-from skimage import measure, morphology
+from skimage import measure, morphology, filters
 import scipy.ndimage as ndimage
 
 # Disable transformers background safetensors conversion check which can cause ReadTimeouts
@@ -67,29 +67,85 @@ class DepthTo3DPipeline:
         return depth.cpu().numpy()
 
     def clean_mask(self, mask: np.ndarray, iterations: int = 1) -> np.ndarray:
-        """Perform morphological opening and edge erosion to isolate object."""
-        print(f"Cleaning mask with morphological operations ({iterations} iterations)...")
-        # Ensure mask is boolean
+        """Surgically isolate the central object island by removing frame-touching pieces."""
+        print(f"Surgical mask cleaning (Pre-Reconstruction Isolation)...")
         mask_bool = mask.astype(bool)
         
-        # Remove small objects
-        mask_clean = morphology.remove_small_objects(mask_bool, min_size=64)
+        # 1. Label connected islands in the mask
+        labels = measure.label(mask_bool)
+        if labels.max() == 0:
+            return mask_bool.astype(float)
+            
+        h, w = mask_bool.shape
+        limit_min = 3 # Margin for "touching" the frame
         
-        # Opening (erosion followed by dilation) to remove thin connections
-        structure = np.ones((3, 3))
-        mask_clean = ndimage.binary_opening(mask_clean, structure=structure, iterations=iterations)
+        island_data = []
+        for i in range(1, labels.max() + 1):
+            island_mask = (labels == i)
+            # Find bounds of this island
+            yy, xx = np.where(island_mask)
+            y_min, y_max = yy.min(), yy.max()
+            x_min, x_max = xx.min(), xx.max()
+            
+            # Count how many image edges it touches
+            touches = 0
+            if x_min < limit_min: touches += 1
+            if x_max > w - limit_min - 1: touches += 1
+            if y_min < limit_min: touches += 1
+            if y_max > h - limit_min - 1: touches += 1
+            
+            # Area of the island
+            area = island_mask.sum()
+            
+            island_data.append({
+                'id': i,
+                'touches': touches,
+                'area': area,
+                'center_dist': np.sqrt((np.mean(xx)-w/2)**2 + (np.mean(yy)-h/2)**2)
+            })
+            
+        # 2. Filtering Logic: Discard anything that looks like a frame/box
+        final_mask = np.zeros_like(mask_bool)
+        kept_islands = 0
         
-        # EXTRA: Erode the edges and boundary to prevent "box" attachments
-        # Specifically target the outer frame
-        h, w = mask_clean.shape
-        border_mask = np.ones_like(mask_clean, dtype=bool)
-        border_thickness = 3 # Trim 3 pixels from all image edges
-        border_mask[border_thickness:-border_thickness, border_thickness:-border_thickness] = 0
+        # Sort islands by area (descending)
+        island_data = sorted(island_data, key=lambda x: x['area'], reverse=True)
         
-        # Zero out anything in the border
-        mask_clean[border_mask] = 0
+        for data in island_data:
+            island_mask = (labels == data['id'])
+            
+            # Logic: If it touches 3 or more edges, it's definitely a background frame.
+            if data['touches'] >= 3:
+                print(f"Discarding frame island {data['id']} (touches {data['touches']} edges)")
+                continue
+                
+            # If it's a very large boundary island, it's likely a frame.
+            if data['touches'] >= 1 and data['area'] > (h * w * 0.6):
+                print(f"Discarding large boundary island {data['id']}")
+                continue
+                
+            final_mask[island_mask] = True
+            kept_islands += 1
+            
+        if kept_islands == 0:
+            print("⚠️ All mask islands were frame-locked. Keeping the one with the smallest frame-touch count.")
+            # Fallback: keep the island that touches the FEWEST edges
+            best_id = min(island_data, key=lambda x: (x['touches'], x['center_dist']))['id']
+            final_mask[labels == best_id] = True
+            
+        # 3. Final cleaning (opening) - AGGRESSIVE
+        # Using a larger structure to break connections
+        structure = np.ones((7, 7))
+        final_mask = ndimage.binary_opening(final_mask, structure=structure, iterations=2)
         
-        return mask_clean.astype(float)
+        # 4. Strict Frame Zeroing (Final Safety)
+        border = 4
+        final_mask[:border, :] = False
+        final_mask[-border:, :] = False
+        final_mask[:, :border] = False
+        final_mask[:, -border:] = False
+        
+        return final_mask.astype(float)
     
     def smooth_depth_map(self, depth: np.ndarray, iterations: int = 1) -> np.ndarray:
         """Apply a simple box blur to smooth the depth map."""
@@ -323,6 +379,12 @@ class DepthTo3DPipeline:
         grid[:, :, -1] = 0
         
         print("Running Marching Cubes...")
+        # Check if the grid has enough variance for Marching Cubes
+        grid_min, grid_max = grid.min(), grid.max()
+        if grid_max - grid_min < 0.1:
+            print("❌ Grid is empty or uniform. Skipping Marching Cubes.")
+            raise ValueError("Empty Grid")
+            
         # marching_cubes returns (axis0, axis1, axis2)
         try:
             verts, faces, normals, values = measure.marching_cubes(grid, level=0.5)
@@ -357,24 +419,70 @@ class DepthTo3DPipeline:
         mesh.vertices -= mesh.bounds.mean(axis=0) # Center
         return mesh
 
-    def isolate_largest_component(self, mesh: trimesh.Trimesh) -> trimesh.Trimesh:
-        """Keep only the largest connected component of the mesh."""
-        print("Isolating main object (removing floating artifacts)...")
+    def isolate_main_object(self, mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+        """
+        Definitive removal of background boxes by discarding components 
+        that touch the boundaries of the generation frame.
+        """
+        print("Running Boundary-Aware Isolation...")
         try:
-            # We use process=True to ensure the mesh is cleaned before splitting
+            # Split the mesh into separate connected components
             components = mesh.split(only_watertight=False)
             if not components:
                 return mesh
             
-            # Find the component with the largest surface area
-            # Background boxes often have large surface area but we've already 
-            # mitigated them with boundary clearing.
-            largest_component = max(components, key=lambda m: m.area)
+            # Boundary-Aware Filter:
+            # We check if a component is "frame-locked" (touches the grid limits)
+            # The mesh is already centered, but we can check the original 
+            # bounds before centering or check the relative bounds now.
+            # Since we centered it, we check if the bounds reach the extreme extents.
             
-            # Simple check: if the largest component is too flat or takes up the whole boundary,
-            # we might need more complex logic. But with zero-wall, the logo is isolated.
+            candidate_components = []
             
-            print(f"Isolated main object: {len(largest_component.vertices)} vertices (removed {len(components)-1} segments)")
+            # The grid was created in [0, 1] range then centered.
+            # So bounds should be roughly [-0.5, 0.5].
+            # Components touching the "walls" will reach these limits.
+            extents = mesh.bounds
+            limit_min = extents[0] + 0.05
+            limit_max = extents[1] - 0.05
+            
+            non_box_components = []
+            
+            for i, comp in enumerate(components):
+                b = comp.bounds
+                # Absolute Frame-Lock Check:
+                # Does the component take up more than 90% of a dimension while touching edges?
+                width_ratio = (b[1, 0] - b[0, 0]) / (extents[1, 0] - extents[0, 0] + 1e-8)
+                height_ratio = (b[1, 1] - b[0, 1]) / (extents[1, 1] - extents[0, 1] + 1e-8)
+                
+                touches = 0
+                if b[0, 0] < limit_min[0]: touches += 1 # Left
+                if b[1, 0] > limit_max[0]: touches += 1 # Right
+                if b[0, 1] < limit_min[1]: touches += 1 # Bottom
+                if b[1, 1] > limit_max[1]: touches += 1 # Top
+                
+                # If it touches multiple edges AND is very large, it's a box
+                is_frame = (touches >= 3) or (touches >= 2 and (width_ratio > 0.9 or height_ratio > 0.9))
+                
+                if is_frame:
+                    print(f"Component {i} identified as Background Box (touches {touches} edges). Discarding.")
+                    continue
+                
+                # If it's a very large flat plane reaching the edges, also discard
+                if touches >= 1 and (b[1, 2] - b[0, 2]) < 0.03:
+                    print(f"Component {i} is a background plane. Discarding.")
+                    continue
+                    
+                non_box_components.append(comp)
+            
+            if not non_box_components:
+                print("⚠️ No isolated central object found. Keeping the component closest to center.")
+                # Fallback: keep the component whose center is closest to [0,0,0]
+                return min(components, key=lambda m: np.linalg.norm(m.vertices.mean(axis=0)))
+            
+            # Keep the largest of the remaining isolated pieces
+            largest_component = max(non_box_components, key=lambda m: m.area)
+            print(f"Successfully isolated central object from {len(non_box_components)} candidates.")
             return largest_component
         except Exception as e:
             print(f"⚠️ Isolation failed: {e}. Returning full mesh.")
@@ -415,23 +523,47 @@ class DepthTo3DPipeline:
         print(f"Estimating depth at {output_resolution}x{output_resolution}...")
         depth = self.estimate_depth(image_resized)
         
-        # Apply depth boost (contrast)
-        if depth_boost > 1.0:
-            print(f"Boosting depth contrast (x{depth_boost})...")
-            depth = np.clip(depth * depth_boost, 0, 1)
-        
-        # Smooth depth map to reduce staircase artifacts
-        print("Smoothing depth map...")
-        depth = self.smooth_depth_map(depth, iterations=1)
-        
-        # Mask the depth map
+        # Mask the depth map BEFORE smoothing to prevent value bleeding
         if remove_background:
+            # SALIENCY-BASED ADAPTIVE THRESHOLDING
+            # We sample corners to find the "background depth"
+            h, w = depth.shape
+            corners = [
+                depth[:10, :10].mean(),
+                depth[:10, -10:].mean(),
+                depth[-10:, :10].mean(),
+                depth[-10:, -10:].mean()
+            ]
+            bg_floor = max(corners)
+            
+            print(f"Corner sampling: background floor detected at {bg_floor:.3f}")
+            
+            if bg_threshold <= 0.15:
+                # Use corner sampling + small buffer as the threshold
+                # 0.03 is usually enough to clear the box walls
+                bg_threshold = max(bg_floor + 0.03, 0.1)
+                try:
+                    # Otsu as a safety cap
+                    o_val = filters.threshold_otsu(depth)
+                    bg_threshold = max(bg_threshold, min(o_val, 0.25))
+                except: pass
+                
+                print(f"Adaptive thresholding: finalized bg_threshold at {bg_threshold:.3f}")
+
             mask = depth > bg_threshold
             
-            # Clean the mask if aggressive_cut is on (acting as "Smart Cleanup")
+            # Surgical Pre-Reconstruction Isolation
             if aggressive_cut:
                 mask = self.clean_mask(mask, iterations=1)
                 
+            depth[~mask.astype(bool)] = 0
+            
+        # Smooth depth map ONLY for non-background pixels to avoid spreading
+        print("Smoothing depth map...")
+        depth = self.smooth_depth_map(depth, iterations=1)
+        
+        # Ensure background stays zero after smoothing
+        if remove_background:
             depth[~mask.astype(bool)] = 0
             
         if "Volumetric" in method:
@@ -461,7 +593,7 @@ class DepthTo3DPipeline:
         
         # Isolate main object if requested
         if isolate_main_object:
-            mesh = self.isolate_largest_component(mesh)
+            mesh = self.isolate_main_object(mesh)
             
         # Final simplification (if not already simplified in depth_to_mesh)
         if 0.01 <= simplify_factor < 1.0:
