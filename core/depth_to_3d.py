@@ -63,7 +63,9 @@ class DepthTo3DPipeline:
     
     def depth_to_mesh(self, image: Image.Image, depth: np.ndarray, 
                        depth_scale: float = 0.5, simplify_factor: float = 0.1,
-                       remove_background: bool = False, bg_threshold: float = 0.1) -> trimesh.Trimesh:
+                       remove_background: bool = False, bg_threshold: float = 0.1,
+                       volumetric: bool = True, thickness: float = 0.1,
+                       smooth_iterations: int = 2) -> trimesh.Trimesh:
         """
         Convert depth map to 3D mesh.
         
@@ -110,22 +112,82 @@ class DepthTo3DPipeline:
             faces = faces[keep_faces]
             
             print(f"Background removal: Reduced faces from {len(keep_faces)} to {len(faces)}")
+            
+            # Re-index vertices to remove unused ones
+            # This is important for find_boundary_edges
+            unique_v_idx = np.unique(faces)
+            v_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(unique_v_idx)}
+            vertices = vertices[unique_v_idx]
+            faces = np.vectorize(v_mapping.get)(faces)
+            
+            # Also re-index vertex colors
+            img_array = np.array(image.resize((width, height)))
+            if len(img_array.shape) == 2:
+                img_array = np.stack([img_array] * 3, axis=-1)
+            if img_array.shape[-1] == 4:
+                img_array = img_array[:, :, :3]
+            vertex_colors = img_array.reshape(-1, 3)[unique_v_idx]
+        else:
+            # Get vertex colors from image (full grid)
+            img_array = np.array(image.resize((width, height)))
+            if len(img_array.shape) == 2:
+                img_array = np.stack([img_array] * 3, axis=-1)
+            if img_array.shape[-1] == 4:
+                img_array = img_array[:, :, :3]
+            vertex_colors = img_array.reshape(-1, 3)
         
-        # Get vertex colors from image
-        img_array = np.array(image.resize((width, height)))
-        if len(img_array.shape) == 2:
-            img_array = np.stack([img_array] * 3, axis=-1)
-        if img_array.shape[-1] == 4:
-            img_array = img_array[:, :, :3]
-        
-        vertex_colors = img_array.reshape(-1, 3)
-        
-        # Create mesh
+        # Create initial mesh
         mesh = trimesh.Trimesh(
             vertices=vertices,
             faces=faces,
             vertex_colors=vertex_colors
         )
+        
+        # Add volume (extrusion)
+        if volumetric:
+            print(f"Adding volume (thickness={thickness})...")
+            # Create a flat back face
+            # We use the same vertices but with a constant Z
+            back_vertices = vertices.copy()
+            # Set Z to a fixed value behind the object
+            back_vertices[:, 2] = depth_scale + thickness
+            
+            # Boundary edges connect front to back
+            # trimesh can find boundary edges for us
+            boundary_edges = mesh.outline().edges_sorted
+            
+            front_v_count = len(vertices)
+            
+            # Create side faces
+            side_faces = []
+            for edge in boundary_edges:
+                v1, v2 = edge
+                # Quad between (v1, v2) on front and (v1', v2') on back
+                # v1' = v1 + front_v_count, v2' = v2 + front_v_count
+                side_faces.append([v1, v2, v1 + front_v_count])
+                side_faces.append([v2, v2 + front_v_count, v1 + front_v_count])
+            
+            # Create back faces (same as front but reversed)
+            back_faces = faces[:, ::-1] + front_v_count
+            
+            # Combine all
+            all_vertices = np.vstack([vertices, back_vertices])
+            all_faces = np.vstack([faces, side_faces, back_faces])
+            
+            # Duplicate colors for back
+            all_colors = np.vstack([vertex_colors, vertex_colors])
+            
+            mesh = trimesh.Trimesh(
+                vertices=all_vertices,
+                faces=all_faces,
+                vertex_colors=all_colors
+            )
+        
+        # Smoothing
+        if smooth_iterations > 0:
+            print(f"Applying Laplacian smoothing ({smooth_iterations} iterations)...")
+            # filter_laplacian is a good generic smoothing
+            trimesh.smoothing.filter_laplacian(mesh, iterations=smooth_iterations)
         
         # Simplify mesh to reduce file size
         if 0.01 <= simplify_factor < 1.0:
@@ -160,7 +222,9 @@ class DepthTo3DPipeline:
     
     def generate(self, image: Image.Image, depth_scale: float = 0.5, 
                  output_resolution: int = 256, simplify_factor: float = 0.1,
-                 remove_background: bool = False, bg_threshold: float = 0.1) -> trimesh.Trimesh:
+                 remove_background: bool = True, bg_threshold: float = 0.1,
+                 volumetric: bool = True, thickness: float = 0.2,
+                 smooth_iterations: int = 2) -> trimesh.Trimesh:
         """
         Full pipeline: Image -> Depth -> 3D Mesh
         
@@ -171,6 +235,9 @@ class DepthTo3DPipeline:
             simplify_factor: How much to simplify (0.1-1.0)
             remove_background: Whether to remove low-depth areas
             bg_threshold: Depth threshold for removal (0-1)
+            volumetric: Whether to add a back face and sides
+            thickness: How thick the model should be
+            smooth_iterations: Number of smoothing passes
         """
         # Resize for processing
         image_resized = image.resize((output_resolution, output_resolution))
@@ -182,14 +249,17 @@ class DepthTo3DPipeline:
         print(f"Estimating depth at {output_resolution}x{output_resolution}...")
         depth = self.estimate_depth(image_resized)
         
-        print(f"Generating 3D mesh (simplify={simplify_factor}, rm_bg={remove_background})...")
+        print(f"Generating 3D mesh (volumetric={volumetric}, simplify={simplify_factor})...")
         mesh = self.depth_to_mesh(
             image_resized, 
             depth, 
             depth_scale=depth_scale, 
             simplify_factor=simplify_factor,
             remove_background=remove_background,
-            bg_threshold=bg_threshold
+            bg_threshold=bg_threshold,
+            volumetric=volumetric,
+            thickness=thickness,
+            smooth_iterations=smooth_iterations
         )
         
         print("3D mesh generated successfully!")

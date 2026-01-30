@@ -12,7 +12,7 @@ from PIL import Image
 from core.depth_to_3d import pipeline
 
 
-def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold):
+def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold, volumetric, thickness, smooth_iterations):
     """Generate 3D mesh from input image."""
     if image is None:
         return None, None, "❌ Please upload an image"
@@ -30,7 +30,10 @@ def generate_3d(image, depth_scale, resolution, simplify_factor, remove_backgrou
             output_resolution=resolution,
             simplify_factor=simplify_factor,
             remove_background=remove_background,
-            bg_threshold=bg_threshold
+            bg_threshold=bg_threshold,
+            volumetric=volumetric,
+            thickness=thickness,
+            smooth_iterations=smooth_iterations
         )
         
         # Export to GLB
@@ -95,6 +98,19 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                         minimum=0.0, maximum=0.5, value=0.1, step=0.01,
                         label="Background Threshold (cut depth below this)"
                     )
+                
+                with gr.Group():
+                    volumetric = gr.Checkbox(
+                        value=True, label="📦 Enable Volume (Make it Filled/Solid)"
+                    )
+                    thickness = gr.Slider(
+                        minimum=0.05, maximum=0.5, value=0.2, step=0.05,
+                        label="Thickness (amount of volume)"
+                    )
+                    smooth_iterations = gr.Slider(
+                        minimum=0, maximum=10, value=2, step=1,
+                        label="Smoothness (Laplacian iterations)"
+                    )
             
             generate_btn = gr.Button("🚀 Generate 3D Model", variant="primary", size="lg")
             
@@ -117,7 +133,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         fn=generate_3d,
         inputs=[
             input_image, depth_scale, resolution, simplify_factor, 
-            remove_background, bg_threshold
+            remove_background, bg_threshold, volumetric, thickness, smooth_iterations
         ],
         outputs=[model_viewer, download_file, status_text]
     )
