@@ -513,6 +513,10 @@ class DepthTo3DPipeline:
             method: "Surface Extrusion" or "Volumetric (Advanced)"
             isolate_main_object: Whether to keep only the largest connected part
         """
+        # Optimized Resolution Checklist:
+        # 256 for Surface (fast)
+        # 128-192 for Volumetric (fast enough on CPU)
+        
         # Resize for processing
         image_resized = image.resize((output_resolution, output_resolution))
         
@@ -568,12 +572,15 @@ class DepthTo3DPipeline:
             
         if "Volumetric" in method:
             print(f"Generating high-fidelity 3D model using Marching Cubes...")
+            # Optimization: 128 is the sweet spot for CPU speed/quality
+            internal_grid_res = 128 if output_resolution >= 256 else output_resolution // 2
+            
             mesh = self.depth_to_volumetric_mesh(
                 image_resized,
                 depth,
                 depth_scale=depth_scale,
                 thickness=thickness,
-                grid_res=output_resolution // 2, # Balance quality and speed
+                grid_res=internal_grid_res, 
                 smooth_iterations=smooth_iterations
             )
         else:

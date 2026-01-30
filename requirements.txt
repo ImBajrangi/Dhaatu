@@ -12,5 +12,4 @@ requests
 gradio
 gradio-client
 huggingface_hub
-fast_simplification
 scikit-image
