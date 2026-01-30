@@ -9,6 +9,7 @@ import torch
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 import trimesh
 import os
+from skimage import measure
 
 # Disable transformers background safetensors conversion check which can cause ReadTimeouts
 os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
@@ -220,46 +221,108 @@ class DepthTo3DPipeline:
                 print(f"⚠️ Smoothing failed: {e}. Skipping smoothing step.")
         
         # Center the mesh
-        print("Centering mesh...")
         mesh.vertices -= mesh.bounds.mean(axis=0)
         
-        # Simplify mesh to reduce file size
-        if 0.01 <= simplify_factor < 1.0:
-            try:
-                # Calculate target face count
-                current_faces = len(mesh.faces)
-                target_faces = int(current_faces * simplify_factor)
-                
-                # Only simplify if we have a significant number of faces
-                # and target is strictly less than current
-                if current_faces > 1000 and target_faces < current_faces:
-                    print(f"Simplifying mesh from {current_faces} to {target_faces} faces...")
-                    # Try both integer face_count and percentage as some trimesh versions/backends 
-                    # have different expectations for the same method
-                    try:
-                        mesh = mesh.simplify_quadric_decimation(target_faces)
-                    except Exception as e:
-                        if "target_reduction" in str(e):
-                            # Reduction factor for fast_simplification backend
-                            reduction = 1.0 - simplify_factor
-                            print(f"Retrying simplification with reduction={reduction:.2f}")
-                            # We can try passing reduction if trimesh supports it via kwargs 
-                            # or just try to pass it as the first argument
-                            mesh = mesh.simplify_quadric_decimation(reduction)
-                        else:
-                            raise e
-            except Exception as e:
-                print(f"⚠️ Mesh simplification failed: {e}. Returning original mesh.")
-                # We return the mesh anyway, it just might be a bit larger
+        return mesh
+
+    def simplify_quadric_decimation(self, mesh: trimesh.Trimesh, simplify_factor: float) -> trimesh.Trimesh:
+        """Helper to simplify mesh with error handling."""
+        try:
+            # Calculate target face count
+            current_faces = len(mesh.faces)
+            target_faces = int(current_faces * simplify_factor)
+            
+            # Only simplify if we have a significant number of faces
+            if current_faces > 1000 and target_faces < current_faces:
+                print(f"Simplifying mesh from {current_faces} to {target_faces} faces...")
+                try:
+                    mesh = mesh.simplify_quadric_decimation(target_faces)
+                except Exception as e:
+                    if "target_reduction" in str(e):
+                        reduction = 1.0 - simplify_factor
+                        print(f"Retrying simplification with reduction={reduction:.2f}")
+                        mesh = mesh.simplify_quadric_decimation(reduction)
+                    else:
+                        raise e
+        except Exception as e:
+            print(f"⚠️ Mesh simplification failed: {e}. Returning original mesh.")
+        return mesh
+
+    def depth_to_volumetric_mesh(self, image: Image.Image, depth: np.ndarray, 
+                                 depth_scale: float = 0.5, thickness: float = 0.2,
+                                 grid_res: int = 128, smooth_iterations: int = 2) -> trimesh.Trimesh:
+        """
+        Create a watertight manifold mesh using Marching Cubes.
+        """
+        print(f"Creating volumetric grid ({grid_res}x{grid_res}x{grid_res})...")
+        # Padding of 1 to ensure a closed surface
+        grid = np.zeros((grid_res + 2, grid_res + 2, grid_res + 2), dtype=float)
         
+        # Resize depth to grid resolution
+        depth_resized = Image.fromarray(depth).resize((grid_res, grid_res), Image.BILINEAR)
+        depth_map = np.array(depth_resized)
+        
+        # Fill grid
+        # Front face at z = depth_map * depth_scale
+        # Back face at z = depth_scale + thickness
+        # Map depth_scale + thickness to grid_res
+        z_max_idx = grid_res
+        z_scale = z_max_idx / (depth_scale + thickness + 1e-8)
+        
+        for y in range(grid_res):
+            for x in range(grid_res):
+                d = depth_map[y, x]
+                if d <= 0: continue # Skip masked background
+                
+                z_front = d * depth_scale
+                z_back = depth_scale + thickness
+                
+                z_start = int(z_front * z_scale) + 1
+                z_end = int(z_back * z_scale) + 1
+                
+                grid[y+1, x+1, z_start:z_end+1] = 1.0
+        
+        print("Running Marching Cubes...")
+        # marching_cubes returns (axis0, axis1, axis2)
+        try:
+            verts, faces, normals, values = measure.marching_cubes(grid, level=0.5)
+        except Exception as e:
+            print(f"❌ Marching Cubes failed: {e}. Falling back to simple extrusion.")
+            # This can happen if the grid is empty
+            return self.depth_to_mesh(image, depth, depth_scale, simplify_factor=1.0)
+            
+        v_final = np.zeros_like(verts)
+        v_final[:, 0] = (verts[:, 1] - 1) / grid_res # X
+        v_final[:, 1] = (verts[:, 0] - 1) / grid_res # Y
+        v_final[:, 2] = (verts[:, 2] - 1) / z_scale  # Z world space
+        
+        v_final[:, 1] = 1.0 - v_final[:, 1] # Flip Y
+        
+        print("Mapping vertex colors...")
+        img_array = np.array(image)
+        h, w = img_array.shape[:2]
+        
+        px = np.clip(v_final[:, 0] * (w - 1), 0, w - 1).astype(int)
+        py = np.clip(v_final[:, 1] * (h - 1), 0, h - 1).astype(int)
+        vertex_colors = img_array[py, px]
+        
+        mesh = trimesh.Trimesh(vertices=v_final, faces=faces, vertex_colors=vertex_colors)
+        
+        if smooth_iterations > 0:
+            print(f"Refining surface ({smooth_iterations} iterations)...")
+            try:
+                trimesh.smoothing.filter_laplacian(mesh, iterations=smooth_iterations, volume_constraint=False)
+            except: pass
+            
+        mesh.vertices -= mesh.bounds.mean(axis=0) # Center
         return mesh
     
     def generate(self, image: Image.Image, depth_scale: float = 0.5, 
                  output_resolution: int = 256, simplify_factor: float = 0.1,
                  remove_background: bool = True, bg_threshold: float = 0.1,
                  volumetric: bool = True, thickness: float = 0.2,
-                 smooth_iterations: int = 2, depth_boost: float = 1.0,
-                 aggressive_cut: bool = True) -> trimesh.Trimesh:
+                 smooth_iterations: int = 2, depth_boost: float = 1.2,
+                 aggressive_cut: bool = True, method: str = "Volumetric (Advanced)") -> trimesh.Trimesh:
         """
         Full pipeline: Image -> Depth -> 3D Mesh
         
@@ -270,11 +333,12 @@ class DepthTo3DPipeline:
             simplify_factor: How much to simplify (0.1-1.0)
             remove_background: Whether to remove low-depth areas
             bg_threshold: Depth threshold for removal (0-1)
-            volumetric: Whether to add a back face and sides
+            volumetric: Whether to add a back face and sides (for Surface method)
             thickness: How thick the model should be
             smooth_iterations: Number of smoothing passes
             depth_boost: Multiply depth values to enhance detail (1.0-2.0)
             aggressive_cut: Whether to be more aggressive with background removal
+            method: "Surface Extrusion" or "Volumetric (Advanced)"
         """
         # Resize for processing
         image_resized = image.resize((output_resolution, output_resolution))
@@ -295,20 +359,39 @@ class DepthTo3DPipeline:
         print("Smoothing depth map...")
         depth = self.smooth_depth_map(depth, iterations=1)
         
-        print(f"Generating 3D mesh (volumetric={volumetric}, simplify={simplify_factor})...")
-        mesh = self.depth_to_mesh(
-            image_resized, 
-            depth, 
-            depth_scale=depth_scale, 
-            simplify_factor=simplify_factor,
-            remove_background=remove_background,
-            bg_threshold=bg_threshold,
-            volumetric=volumetric,
-            thickness=thickness,
-            smooth_iterations=smooth_iterations,
-            aggressive_cut=aggressive_cut
-        )
+        if "Volumetric" in method:
+            print(f"Generating high-fidelity 3D model using Marching Cubes...")
+            # For Marching Cubes, we mask the depth map first if background removal is on
+            if remove_background:
+                depth[depth < bg_threshold] = 0
+                
+            mesh = self.depth_to_volumetric_mesh(
+                image_resized,
+                depth,
+                depth_scale=depth_scale,
+                thickness=thickness,
+                grid_res=output_resolution // 2, # Balance quality and speed
+                smooth_iterations=smooth_iterations
+            )
+        else:
+            print(f"Generating 3D model using Surface Extrusion...")
+            mesh = self.depth_to_mesh(
+                image_resized, 
+                depth, 
+                depth_scale=depth_scale, 
+                simplify_factor=simplify_factor,
+                remove_background=remove_background,
+                bg_threshold=bg_threshold,
+                volumetric=volumetric,
+                thickness=thickness,
+                smooth_iterations=smooth_iterations,
+                aggressive_cut=aggressive_cut
+            )
         
+        # Final simplification (if not already simplified in depth_to_mesh)
+        if 0.01 <= simplify_factor < 1.0:
+            mesh = self.simplify_quadric_decimation(mesh, simplify_factor)
+            
         print("3D mesh generated successfully!")
         return mesh
 

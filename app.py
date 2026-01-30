@@ -12,7 +12,7 @@ from PIL import Image
 from core.depth_to_3d import pipeline
 
 
-def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold, volumetric, thickness, smooth_iterations, depth_boost, aggressive_cut):
+def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold, volumetric, thickness, smooth_iterations, depth_boost, aggressive_cut, method):
     """Generate 3D mesh from input image."""
     if image is None:
         return None, None, "❌ Please upload an image"
@@ -35,7 +35,8 @@ def generate_3d(image, depth_scale, resolution, simplify_factor, remove_backgrou
             thickness=thickness,
             smooth_iterations=smooth_iterations,
             depth_boost=depth_boost,
-            aggressive_cut=aggressive_cut
+            aggressive_cut=aggressive_cut,
+            method=method
         )
         
         # Export to GLB
@@ -73,7 +74,13 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         with gr.Column(scale=1):
             input_image = gr.Image(label="📸 Input Image", type="pil")
             
-            with gr.Accordion("⚙️ Settings", open=True):
+            with gr.Accordion("⚙️ Generation Settings", open=True):
+                method = gr.Dropdown(
+                    choices=["Volumetric (Advanced)", "Surface Extrusion (Fast)"],
+                    value="Volumetric (Advanced)",
+                    label="🧠 Reconstruction Engine"
+                )
+                
                 depth_scale = gr.Slider(
                     minimum=0.1, maximum=1.0, value=0.4, step=0.05,
                     label="Depth Scale (how 3D it looks)"
@@ -140,7 +147,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         inputs=[
             input_image, depth_scale, resolution, simplify_factor, 
             remove_background, bg_threshold, volumetric, thickness, 
-            smooth_iterations, depth_boost, aggressive_cut
+            smooth_iterations, depth_boost, aggressive_cut, method
         ],
         outputs=[model_viewer, download_file, status_text]
     )
