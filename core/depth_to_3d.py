@@ -66,11 +66,27 @@ class DepthTo3DPipeline:
         
         return depth
     
+    def smooth_depth_map(self, depth: np.ndarray, iterations: int = 1) -> np.ndarray:
+        """Apply a simple box blur to smooth the depth map."""
+        if iterations <= 0:
+            return depth
+            
+        # Convert to torch for fast convolution
+        t = torch.from_numpy(depth).unsqueeze(0).unsqueeze(0)
+        
+        for _ in range(iterations):
+            # 3x3 mean filter
+            kernel = torch.ones((1, 1, 3, 3), device=t.device) / 9.0
+            t = torch.nn.functional.pad(t, (1, 1, 1, 1), mode='reflect')
+            t = torch.nn.functional.conv2d(t, kernel)
+            
+        return t.squeeze().numpy()
+    
     def depth_to_mesh(self, image: Image.Image, depth: np.ndarray, 
                        depth_scale: float = 0.5, simplify_factor: float = 0.1,
                        remove_background: bool = False, bg_threshold: float = 0.1,
                        volumetric: bool = True, thickness: float = 0.1,
-                       smooth_iterations: int = 2) -> trimesh.Trimesh:
+                       smooth_iterations: int = 2, aggressive_cut: bool = True) -> trimesh.Trimesh:
         """
         Convert depth map to 3D mesh.
         
@@ -110,13 +126,17 @@ class DepthTo3DPipeline:
         if remove_background:
             # depth ranges from 0 (far) to 1 (near)
             # We want to remove vertices where depth is near 0
-            # A face is background if ALL its vertices are below the threshold
             mask = depth.flatten()[faces] > bg_threshold
-            # Keep faces where at least one vertex is foreground
-            keep_faces = np.any(mask, axis=1)
-            faces = faces[keep_faces]
             
-            print(f"Background removal: Reduced faces from {len(keep_faces)} to {len(faces)}")
+            if aggressive_cut:
+                # Keep faces where ALL vertices are foreground (aggressive)
+                keep_faces = np.all(mask, axis=1)
+            else:
+                # Keep faces where at least one vertex is foreground (lenient)
+                keep_faces = np.any(mask, axis=1)
+                
+            faces = faces[keep_faces]
+            print(f"Background removal: Reduced faces from {len(mask)} to {len(faces)}")
             
             # Re-index vertices to remove unused ones
             # This is important for find_boundary_edges
@@ -201,6 +221,10 @@ class DepthTo3DPipeline:
             except Exception as e:
                 print(f"⚠️ Smoothing failed: {e}. Skipping smoothing step.")
         
+        # Center the mesh
+        print("Centering mesh...")
+        mesh.vertices -= mesh.bounds.mean(axis=0)
+        
         # Simplify mesh to reduce file size
         if 0.01 <= simplify_factor < 1.0:
             try:
@@ -236,7 +260,8 @@ class DepthTo3DPipeline:
                  output_resolution: int = 256, simplify_factor: float = 0.1,
                  remove_background: bool = True, bg_threshold: float = 0.1,
                  volumetric: bool = True, thickness: float = 0.2,
-                 smooth_iterations: int = 2) -> trimesh.Trimesh:
+                 smooth_iterations: int = 2, depth_boost: float = 1.0,
+                 aggressive_cut: bool = True) -> trimesh.Trimesh:
         """
         Full pipeline: Image -> Depth -> 3D Mesh
         
@@ -250,6 +275,8 @@ class DepthTo3DPipeline:
             volumetric: Whether to add a back face and sides
             thickness: How thick the model should be
             smooth_iterations: Number of smoothing passes
+            depth_boost: Multiply depth values to enhance detail (1.0-2.0)
+            aggressive_cut: Whether to be more aggressive with background removal
         """
         # Resize for processing
         image_resized = image.resize((output_resolution, output_resolution))
@@ -261,6 +288,15 @@ class DepthTo3DPipeline:
         print(f"Estimating depth at {output_resolution}x{output_resolution}...")
         depth = self.estimate_depth(image_resized)
         
+        # Apply depth boost (contrast)
+        if depth_boost > 1.0:
+            print(f"Boosting depth contrast (x{depth_boost})...")
+            depth = np.clip(depth * depth_boost, 0, 1)
+        
+        # Smooth depth map to reduce staircase artifacts
+        print("Smoothing depth map...")
+        depth = self.smooth_depth_map(depth, iterations=1)
+        
         print(f"Generating 3D mesh (volumetric={volumetric}, simplify={simplify_factor})...")
         mesh = self.depth_to_mesh(
             image_resized, 
@@ -271,7 +307,8 @@ class DepthTo3DPipeline:
             bg_threshold=bg_threshold,
             volumetric=volumetric,
             thickness=thickness,
-            smooth_iterations=smooth_iterations
+            smooth_iterations=smooth_iterations,
+            aggressive_cut=aggressive_cut
         )
         
         print("3D mesh generated successfully!")

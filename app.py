@@ -12,7 +12,7 @@ from PIL import Image
 from core.depth_to_3d import pipeline
 
 
-def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold, volumetric, thickness, smooth_iterations):
+def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold, volumetric, thickness, smooth_iterations, depth_boost, aggressive_cut):
     """Generate 3D mesh from input image."""
     if image is None:
         return None, None, "❌ Please upload an image"
@@ -33,7 +33,9 @@ def generate_3d(image, depth_scale, resolution, simplify_factor, remove_backgrou
             bg_threshold=bg_threshold,
             volumetric=volumetric,
             thickness=thickness,
-            smooth_iterations=smooth_iterations
+            smooth_iterations=smooth_iterations,
+            depth_boost=depth_boost,
+            aggressive_cut=aggressive_cut
         )
         
         # Export to GLB
@@ -111,6 +113,15 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                         minimum=0, maximum=10, value=2, step=1,
                         label="Smoothness (Laplacian iterations)"
                     )
+                
+                with gr.Accordion("✨ Advanced Quality", open=False):
+                    depth_boost = gr.Slider(
+                        minimum=1.0, maximum=3.0, value=1.2, step=0.1,
+                        label="Depth Boost (Contrast)"
+                    )
+                    aggressive_cut = gr.Checkbox(
+                        value=True, label="✂️ Aggressive Edge Cut (Cleaner isolation)"
+                    )
             
             generate_btn = gr.Button("🚀 Generate 3D Model", variant="primary", size="lg")
             
@@ -133,7 +144,8 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         fn=generate_3d,
         inputs=[
             input_image, depth_scale, resolution, simplify_factor, 
-            remove_background, bg_threshold, volumetric, thickness, smooth_iterations
+            remove_background, bg_threshold, volumetric, thickness, 
+            smooth_iterations, depth_boost, aggressive_cut
         ],
         outputs=[model_viewer, download_file, status_text]
     )
