@@ -398,14 +398,15 @@ class DepthTo3DPipeline:
         v_final[:, 1] = (verts[:, 0] - 1) / grid_res # Y
         v_final[:, 2] = (verts[:, 2] - 1) / z_scale  # Z world space
         
-        v_final[:, 1] = 1.0 - v_final[:, 1] # Flip Y
+        v_final[:, 1] = 1.0 - v_final[:, 1] # Flip Y to make mesh upright (Y-up)
         
         print("Mapping vertex colors...")
         img_array = np.array(image)
         h, w = img_array.shape[:2]
         
+        # We need to map 3D Y (0 at bottom, 1 at top) back to Image Y (0 at top, 1 at bottom)
         px = np.clip(v_final[:, 0] * (w - 1), 0, w - 1).astype(int)
-        py = np.clip(v_final[:, 1] * (h - 1), 0, h - 1).astype(int)
+        py = np.clip((1.0 - v_final[:, 1]) * (h - 1), 0, h - 1).astype(int)
         vertex_colors = img_array[py, px]
         
         mesh = trimesh.Trimesh(vertices=v_final, faces=faces, vertex_colors=vertex_colors)
