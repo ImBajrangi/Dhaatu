@@ -8,6 +8,11 @@ from PIL import Image
 import torch
 from transformers import DPTImageProcessor, DPTForDepthEstimation
 import trimesh
+import os
+
+# Disable transformers background safetensors conversion check which can cause ReadTimeouts
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
+os.environ["HUGGINGFACE_HUB_READ_TIMEOUT"] = "300" # Increase timeout just in case
 
 class DepthTo3DPipeline:
     """
@@ -188,8 +193,13 @@ class DepthTo3DPipeline:
         # Smoothing
         if smooth_iterations > 0:
             print(f"Applying Laplacian smoothing ({smooth_iterations} iterations)...")
-            # filter_laplacian is a good generic smoothing
-            trimesh.smoothing.filter_laplacian(mesh, iterations=smooth_iterations)
+            # Using volume_constraint=False to avoid "invalid value encountered in scalar power"
+            # which happens when the mesh volume is zero or near-zero during smoothing.
+            # We also use a smaller lamb for more stable smoothing.
+            try:
+                trimesh.smoothing.filter_laplacian(mesh, iterations=smooth_iterations, volume_constraint=False, lamb=0.5)
+            except Exception as e:
+                print(f"⚠️ Smoothing failed: {e}. Skipping smoothing step.")
         
         # Simplify mesh to reduce file size
         if 0.01 <= simplify_factor < 1.0:
