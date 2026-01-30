@@ -367,11 +367,14 @@ class DepthTo3DPipeline:
                 if d <= 0: continue # Skip masked background
                 
                 # If not in eroded mask, it's an "edge" pixel - make it thinner
+                # but NOT too thin (at least 0.05) to avoid hollow look
                 local_thickness = thickness
                 if not mask_eroded[y, x]:
-                    local_thickness = thickness * 0.1 # Very thin at edges
+                    local_thickness = max(thickness * 0.1, 0.05) 
                 
                 z_front = d * depth_scale
+                # SOLIDIFICATION: Ensure all parts have a flat backplane relative to max depth
+                # This makes the object look like a solid block rather than a mask.
                 z_back = depth_scale + local_thickness
                 
                 z_start = int(z_front * z_scale) + 1
@@ -522,7 +525,7 @@ class DepthTo3DPipeline:
     def generate(self, image: Image.Image, depth_scale: float = 0.5, 
                  output_resolution: int = 256, simplify_factor: float = 0.1,
                  remove_background: bool = True, bg_threshold: float = 0.1,
-                 volumetric: bool = True, thickness: float = 0.2,
+                 volumetric: bool = True, thickness: float = 0.3,
                  smooth_iterations: int = 2, depth_boost: float = 1.2,
                  aggressive_cut: bool = True, method: str = "Volumetric (Advanced)",
                  isolate_main_object: bool = True) -> trimesh.Trimesh:
