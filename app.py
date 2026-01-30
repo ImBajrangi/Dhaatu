@@ -67,9 +67,9 @@ def generate_3d(image, depth_scale, resolution, simplify_factor, remove_backgrou
 
 # Build Gradio UI
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# 🗿 Dhaatu: Image-to-3D Generator")
-    gr.Markdown("### Powered by Depth Anything V2 (Small) • State-of-the-Art Depth Estimation")
-    gr.Markdown("Convert any image into a solid, smooth 3D model! Works on CPU.")
+    gr.Markdown("# 🗿 Dhaatu V3: Industrial 3D Generator")
+    gr.Markdown("### Powered by Depth Anything V2 + Industrial Isolation (rembg)")
+    gr.Markdown("Convert any image into a **solid, professional 3D block**! Optimized for logos and characters.")
     
     with gr.Row():
         with gr.Column(scale=1):
@@ -83,16 +83,16 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 )
                 
                 depth_scale = gr.Slider(
-                    minimum=0.1, maximum=1.0, value=0.4, step=0.05,
+                    minimum=0.1, maximum=1.5, value=0.6, step=0.05,
                     label="Depth Scale (how 3D it looks)"
                 )
                 resolution = gr.Slider(
-                    minimum=128, maximum=512, value=256, step=64,
-                    label="Resolution (higher = more detail, slower)"
+                    minimum=128, maximum=512, value=320, step=64,
+                    label="Resolution (V3 default: 320)"
                 )
                 simplify_factor = gr.Slider(
-                    minimum=0.01, maximum=1.0, value=0.1, step=0.05,
-                    label="Mesh Quality (lower % = smaller/faster files)"
+                    minimum=0.01, maximum=1.0, value=0.15, step=0.05,
+                    label="Mesh Detail (lower % = cleaner files)"
                 )
                 
                 with gr.Group():
@@ -106,11 +106,11 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 
                 with gr.Group():
                     volumetric = gr.Checkbox(
-                        value=True, label="📦 Enable Volume (Make it Filled/Solid)"
+                        value=True, label="📦 Enable True Solidification (V3)"
                     )
                     thickness = gr.Slider(
-                        minimum=0.05, maximum=0.5, value=0.2, step=0.05,
-                        label="Thickness (amount of volume)"
+                        minimum=0.05, maximum=1.0, value=0.35, step=0.05,
+                        label="Thickness (Solid Foundation)"
                     )
                     smooth_iterations = gr.Slider(
                         minimum=0, maximum=10, value=2, step=1,

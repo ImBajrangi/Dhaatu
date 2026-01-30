@@ -31,3 +31,7 @@ This is YOUR custom 3D mesh generator that uses depth estimation to create 3D mo
 ## Credits
 - Depth estimation: [Intel DPT](https://huggingface.co/Intel/dpt-hybrid-midas)
 - Built with: Transformers, Trimesh, Gradio
+
+# Git Commands
+
+- git add . && git commit -m "Dhaatu V3: Definitive Solidification and Industrial Isolation (rembg) Update" && git push origin Dhaatu && git checkout main && git merge Dhaatu && git push origin main && git push github Dhaatu && git push github main && git checkout Dhaatu

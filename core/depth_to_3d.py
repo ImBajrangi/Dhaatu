@@ -411,9 +411,12 @@ class DepthTo3DPipeline:
         v_final = np.zeros_like(verts)
         v_final[:, 0] = (verts[:, 1] - 1) / grid_res # X
         v_final[:, 1] = (verts[:, 0] - 1) / grid_res # Y
+        # SOLIDIFICATION: Map Z so that 0 is near the camera for the backplane
         v_final[:, 2] = (verts[:, 2] - 1) / z_scale  # Z world space
         
         v_final[:, 1] = 1.0 - v_final[:, 1] # Flip Y to make mesh upright (Y-up)
+        # Flip Z so depth=1 is closer to camera (standard right-handed)
+        v_final[:, 2] = v_final[:, 2].max() - v_final[:, 2] 
         
         print("Mapping vertex colors...")
         img_array = np.array(image)
@@ -454,6 +457,10 @@ class DepthTo3DPipeline:
         except Exception as e:
             print(f"⚠️ UV Unwrapping skipped: {e}")
             
+        # Ensure manifold and clean normals for "Solid" feel
+        mesh.fill_holes()
+        mesh.process() # Welds vertices, fixes normals
+        
         if smooth_iterations > 0:
             print(f"Refining surface ({smooth_iterations} iterations)...")
             try:
