@@ -13,3 +13,6 @@ gradio
 gradio-client
 huggingface_hub
 scikit-image
+rembg
+onnxruntime
+xatlas
