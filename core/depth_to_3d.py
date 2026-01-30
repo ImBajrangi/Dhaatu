@@ -357,13 +357,24 @@ class DepthTo3DPipeline:
         # Boundary Trimming: We ignore a small border to prevent "box walls"
         trim = 3
         
+        # CLEAN-EDGE: Use an eroded version of the mask to fill the grid.
+        # This prevents "spikes" from forming between the subject and the background.
+        # If a pixel is near the edge, we don't let it extrude deep.
+        mask_bool = (depth_map > 0).astype(np.uint8)
+        mask_eroded = ndimage.binary_erosion(mask_bool, structure=np.ones((3, 3)), iterations=1)
+        
         for y in range(trim, grid_res - trim):
             for x in range(trim, grid_res - trim):
                 d = depth_map[y, x]
                 if d <= 0: continue # Skip masked background
                 
+                # If not in eroded mask, it's an "edge" pixel - make it thinner
+                local_thickness = thickness
+                if not mask_eroded[y, x]:
+                    local_thickness = thickness * 0.1 # Very thin at edges
+                
                 z_front = d * depth_scale
-                z_back = depth_scale + thickness
+                z_back = depth_scale + local_thickness
                 
                 z_start = int(z_front * z_scale) + 1
                 z_end = int(z_back * z_scale) + 1
@@ -413,6 +424,19 @@ class DepthTo3DPipeline:
         vertex_colors = img_array[py, px]
         
         mesh = trimesh.Trimesh(vertices=v_final, faces=faces, vertex_colors=vertex_colors)
+        
+        # GEOMETRIC SPIKE PRUNING: Remove faces with extreme aspect ratios (spikes)
+        print("Pruning geometric spikes (long triangles)...")
+        face_verts = mesh.vertices[mesh.faces]
+        edge_lens = np.linalg.norm(face_verts[:, [0, 1, 2]] - face_verts[:, [1, 2, 0]], axis=2)
+        max_edge = edge_lens.max(axis=1)
+        min_edge = edge_lens.min(axis=1) + 1e-6
+        aspect_ratio = max_edge / min_edge
+        
+        # Keep only "well-shaped" triangles. Spikes are usually 10x-50x long.
+        keep_faces = aspect_ratio < 10.0
+        mesh.update_faces(keep_faces)
+        mesh.remove_unreferenced_vertices()
         
         if smooth_iterations > 0:
             print(f"Refining surface ({smooth_iterations} iterations)...")
@@ -547,9 +571,9 @@ class DepthTo3DPipeline:
                 except: pass
                 
             # CLEAN DEPTH: Shave off noise spikes using a Median Filter
-            # This is extremely effective against the report "spikes"
-            print("Applying median filter to shave off depth spikes...")
-            depth = ndimage.median_filter(depth, size=3)
+            # size=5 is powerful for 512x512 images to kill spikes
+            print("Applying strong median filter to shave off depth spikes...")
+            depth = ndimage.median_filter(depth, size=5)
             
             mask = depth > bg_threshold
             
