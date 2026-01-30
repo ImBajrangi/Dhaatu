@@ -62,7 +62,8 @@ class DepthTo3DPipeline:
         return depth
     
     def depth_to_mesh(self, image: Image.Image, depth: np.ndarray, 
-                       depth_scale: float = 0.5, simplify_factor: float = 0.1) -> trimesh.Trimesh:
+                       depth_scale: float = 0.5, simplify_factor: float = 0.1,
+                       remove_background: bool = False, bg_threshold: float = 0.1) -> trimesh.Trimesh:
         """
         Convert depth map to 3D mesh.
         
@@ -97,6 +98,18 @@ class DepthTo3DPipeline:
         f1 = np.stack([idx, idx + width, idx + 1], axis=-1).reshape(-1, 3)
         f2 = np.stack([idx + 1, idx + width, idx + width + 1], axis=-1).reshape(-1, 3)
         faces = np.vstack([f1, f2])
+        
+        # Background removal (optional)
+        if remove_background:
+            # depth ranges from 0 (far) to 1 (near)
+            # We want to remove vertices where depth is near 0
+            # A face is background if ALL its vertices are below the threshold
+            mask = depth.flatten()[faces] > bg_threshold
+            # Keep faces where at least one vertex is foreground
+            keep_faces = np.any(mask, axis=1)
+            faces = faces[keep_faces]
+            
+            print(f"Background removal: Reduced faces from {len(keep_faces)} to {len(faces)}")
         
         # Get vertex colors from image
         img_array = np.array(image.resize((width, height)))
@@ -146,7 +159,8 @@ class DepthTo3DPipeline:
         return mesh
     
     def generate(self, image: Image.Image, depth_scale: float = 0.5, 
-                 output_resolution: int = 256, simplify_factor: float = 0.1) -> trimesh.Trimesh:
+                 output_resolution: int = 256, simplify_factor: float = 0.1,
+                 remove_background: bool = False, bg_threshold: float = 0.1) -> trimesh.Trimesh:
         """
         Full pipeline: Image -> Depth -> 3D Mesh
         
@@ -155,6 +169,8 @@ class DepthTo3DPipeline:
             depth_scale: Depth extrusion amount (0.1-1.0)
             output_resolution: Resolution for processing (lower = faster)
             simplify_factor: How much to simplify (0.1-1.0)
+            remove_background: Whether to remove low-depth areas
+            bg_threshold: Depth threshold for removal (0-1)
         """
         # Resize for processing
         image_resized = image.resize((output_resolution, output_resolution))
@@ -166,8 +182,15 @@ class DepthTo3DPipeline:
         print(f"Estimating depth at {output_resolution}x{output_resolution}...")
         depth = self.estimate_depth(image_resized)
         
-        print(f"Generating 3D mesh (simplify={simplify_factor})...")
-        mesh = self.depth_to_mesh(image_resized, depth, depth_scale=depth_scale, simplify_factor=simplify_factor)
+        print(f"Generating 3D mesh (simplify={simplify_factor}, rm_bg={remove_background})...")
+        mesh = self.depth_to_mesh(
+            image_resized, 
+            depth, 
+            depth_scale=depth_scale, 
+            simplify_factor=simplify_factor,
+            remove_background=remove_background,
+            bg_threshold=bg_threshold
+        )
         
         print("3D mesh generated successfully!")
         return mesh

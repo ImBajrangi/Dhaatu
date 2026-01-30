@@ -12,7 +12,7 @@ from PIL import Image
 from core.depth_to_3d import pipeline
 
 
-def generate_3d(image, depth_scale, resolution, simplify_factor):
+def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold):
     """Generate 3D mesh from input image."""
     if image is None:
         return None, None, "❌ Please upload an image"
@@ -28,7 +28,9 @@ def generate_3d(image, depth_scale, resolution, simplify_factor):
             image, 
             depth_scale=depth_scale,
             output_resolution=resolution,
-            simplify_factor=simplify_factor
+            simplify_factor=simplify_factor,
+            remove_background=remove_background,
+            bg_threshold=bg_threshold
         )
         
         # Export to GLB
@@ -84,6 +86,15 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                     minimum=0.01, maximum=1.0, value=0.1, step=0.05,
                     label="Mesh Quality (lower % = smaller/faster files)"
                 )
+                
+                with gr.Group():
+                    remove_background = gr.Checkbox(
+                        value=True, label="✂️ Remove Background (Extract Object)"
+                    )
+                    bg_threshold = gr.Slider(
+                        minimum=0.0, maximum=0.5, value=0.1, step=0.01,
+                        label="Background Threshold (cut depth below this)"
+                    )
             
             generate_btn = gr.Button("🚀 Generate 3D Model", variant="primary", size="lg")
             
@@ -104,7 +115,10 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     # Event handlers
     generate_btn.click(
         fn=generate_3d,
-        inputs=[input_image, depth_scale, resolution, simplify_factor],
+        inputs=[
+            input_image, depth_scale, resolution, simplify_factor, 
+            remove_background, bg_threshold
+        ],
         outputs=[model_viewer, download_file, status_text]
     )
 
