@@ -6,7 +6,7 @@ Works on CPU - no GPU required!
 import numpy as np
 from PIL import Image
 import torch
-from transformers import DPTImageProcessor, DPTForDepthEstimation
+from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 import trimesh
 import os
 
@@ -17,7 +17,7 @@ os.environ["HUGGINGFACE_HUB_READ_TIMEOUT"] = "300" # Increase timeout just in ca
 class DepthTo3DPipeline:
     """
     Custom pipeline that converts images to 3D using depth estimation.
-    Uses Intel's DPT model which runs efficiently on CPU.
+    Uses Depth Anything V2 (Small) which provides state-of-the-art results on CPU.
     """
     
     def __init__(self, device="cpu"):
@@ -30,9 +30,10 @@ class DepthTo3DPipeline:
         if self.model is not None:
             return
             
-        print("Loading DPT depth estimation model...")
-        self.processor = DPTImageProcessor.from_pretrained("Intel/dpt-hybrid-midas")
-        self.model = DPTForDepthEstimation.from_pretrained("Intel/dpt-hybrid-midas")
+        print("Loading Depth Anything V2 Small model...")
+        model_id = "depth-anything/Depth-Anything-V2-Small-hf"
+        self.processor = AutoImageProcessor.from_pretrained(model_id)
+        self.model = AutoModelForDepthEstimation.from_pretrained(model_id)
         self.model.to(self.device)
         self.model.eval()
         print("Model loaded successfully!")
@@ -50,18 +51,15 @@ class DepthTo3DPipeline:
             outputs = self.model(**inputs)
             predicted_depth = outputs.predicted_depth
         
-        # Interpolate to original size
-        prediction = torch.nn.functional.interpolate(
+        # Interpolate and normalize depth
+        depth = torch.nn.functional.interpolate(
             predicted_depth.unsqueeze(1),
             size=image.size[::-1],
             mode="bicubic",
             align_corners=False,
-        )
+        ).squeeze()
         
-        # Convert to numpy
-        depth = prediction.squeeze().cpu().numpy()
-        
-        # Normalize depth
+        depth = depth.cpu().numpy()
         depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
         
         return depth

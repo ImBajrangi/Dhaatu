@@ -65,14 +65,9 @@ def generate_3d(image, depth_scale, resolution, simplify_factor, remove_backgrou
 
 # Build Gradio UI
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
-    gr.Markdown("""
-    # 🗿 Dhaatu: Your Own Image-to-3D Generator
-    
-    **100% Free • Runs on CPU • You Own It Completely**
-    
-    This converter uses depth estimation (Intel DPT) to create 3D meshes from single images.
-    Upload any image and get a downloadable 3D model!
-    """)
+    gr.Markdown("# 🗿 Dhaatu: Image-to-3D Generator")
+    gr.Markdown("### Powered by Depth Anything V2 (Small) • State-of-the-Art Depth Estimation")
+    gr.Markdown("Convert any image into a solid, smooth 3D model! Works on CPU.")
     
     with gr.Row():
         with gr.Column(scale=1):
