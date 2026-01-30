@@ -23,6 +23,7 @@ def generate_3d(image, depth_scale, resolution, simplify_factor):
             image = Image.fromarray(image)
         
         # Generate mesh
+        print(f"Starting generation with scale={depth_scale}, res={resolution}, simplify={simplify_factor}")
         mesh = pipeline.generate(
             image, 
             depth_scale=depth_scale,
@@ -31,15 +32,27 @@ def generate_3d(image, depth_scale, resolution, simplify_factor):
         )
         
         # Export to GLB
-        glb_path = tempfile.NamedTemporaryFile(suffix=".glb", delete=False).name
+        print(f"Generating GLB for mesh with {len(mesh.faces)} faces...")
+        
+        # Build path in a way that avoids permission issues
+        # and ensure the directory exists
+        out_dir = "temp_models"
+        os.makedirs(out_dir, exist_ok=True)
+        glb_path = os.path.join(out_dir, f"model_{next(tempfile._get_candidate_names())}.glb")
+        
         mesh.export(glb_path)
+        print(f"Mesh exported to {glb_path}")
         
         status = f"✅ Generated 3D model with {len(mesh.vertices)} vertices and {len(mesh.faces)} faces"
+        if len(mesh.faces) > 50000:
+            status += "\n⚠️ Warning: Large mesh may be slow to render in browser."
+            
         return glb_path, glb_path, status
         
     except Exception as e:
         import traceback
-        traceback.print_exc()
+        error_msg = traceback.format_exc()
+        print(f"CRITICAL ERROR in generate_3d: {error_msg}")
         return None, None, f"❌ Error: {str(e)}"
 
 

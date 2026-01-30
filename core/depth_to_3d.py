@@ -125,7 +125,20 @@ class DepthTo3DPipeline:
                 # and target is strictly less than current
                 if current_faces > 1000 and target_faces < current_faces:
                     print(f"Simplifying mesh from {current_faces} to {target_faces} faces...")
-                    mesh = mesh.simplify_quadric_decimation(target_faces)
+                    # Try both integer face_count and percentage as some trimesh versions/backends 
+                    # have different expectations for the same method
+                    try:
+                        mesh = mesh.simplify_quadric_decimation(target_faces)
+                    except Exception as e:
+                        if "target_reduction" in str(e):
+                            # Reduction factor for fast_simplification backend
+                            reduction = 1.0 - simplify_factor
+                            print(f"Retrying simplification with reduction={reduction:.2f}")
+                            # We can try passing reduction if trimesh supports it via kwargs 
+                            # or just try to pass it as the first argument
+                            mesh = mesh.simplify_quadric_decimation(reduction)
+                        else:
+                            raise e
             except Exception as e:
                 print(f"⚠️ Mesh simplification failed: {e}. Returning original mesh.")
                 # We return the mesh anyway, it just might be a bit larger
