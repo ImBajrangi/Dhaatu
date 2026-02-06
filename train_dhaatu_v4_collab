@@ -1,0 +1,254 @@
+import os
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+import numpy as np
+# !pip install trimesh
+import trimesh
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import zipfile
+import requests
+from pathlib import Path
+
+# =============================================================================
+# DHAATU V4: INDUSTRIAL 3D TRAINING SCRIPT (BIG DATA READY)
+# Designed for Google Colab. Supports ModelNet40, ShapeNet, etc.
+# =============================================================================
+
+class Config:
+    # Dataset
+    VOXEL_SIZE = 24  # Reduced from 32 for "Lite" CPU speed boost
+    DATASET_PATH = "data/ModelNet40"
+    CACHE_PATH = "data/voxels_cache" # Where pre-processed .npy files go
+    DATASET_URL = "http://modelnet.cs.princeton.edu/ModelNet40.zip"
+    BATCH_SIZE = 16 # Reduced for lower memory usage
+    NUM_WORKERS = 0 
+    
+    # Model Settings
+    LATENT_DIM = 256 # Balanced for speed/quality
+    
+    # Training
+    EPOCHS = 100
+    LEARNING_RATE = 5e-4 # Faster learning for small resolution
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    SAVE_DIR = "checkpoints"
+
+# -----------------------------------------------------------------------------
+# 1. Big Data Manager, Voxelizer & PreProcessor
+# -----------------------------------------------------------------------------
+class DatasetManager:
+    @staticmethod
+    def download_modelnet():
+        """Automatically downloads and extracts ModelNet40."""
+        target_dir = Path("data")
+        target_dir.mkdir(exist_ok=True)
+        zip_path = target_dir / "ModelNet40.zip"
+        
+        if (target_dir / "ModelNet40").exists():
+            print("✅ ModelNet40 already exists.")
+            return str(target_dir / "ModelNet40")
+
+        print(f"📥 Downloading ModelNet40 (Approx 450MB)...")
+        response = requests.get(Config.DATASET_URL, stream=True)
+        with open(zip_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        print("📂 Extracting dataset...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(target_dir)
+        
+        return str(target_dir / "ModelNet40")
+
+class PreProcessor:
+    """Pre-converts 3D Meshes to .npy voxels to avoid slow on-the-fly conversion."""
+    @staticmethod
+    def run(raw_dir, cache_dir, voxel_size):
+        raw_dir = Path(raw_dir)
+        cache_dir = Path(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        print(f"🛠 Starting Pre-processing (Mesh -> Voxel Cache)...")
+        valid_exts = ('.off', '.obj', '.stl')
+        all_files = []
+        for root, _, files in os.walk(raw_dir):
+            for file in files:
+                if file.lower().endswith(valid_exts):
+                    all_files.append(Path(root) / file)
+        
+        print(f"📦 Found {len(all_files)} files. Converting for speed boost...")
+        for i, file_path in enumerate(tqdm(all_files)):
+            # Create a unique name based on relative path
+            rel_path = file_path.relative_to(raw_dir)
+            cache_file = cache_dir / (str(rel_path).replace(os.sep, '_') + ".npy")
+            
+            if not cache_file.exists():
+                voxels = Voxelizer.process_mesh(str(file_path), voxel_size)
+                np.save(cache_file, voxels)
+        
+        print(f"✅ Pre-processing complete. Cache stored in {cache_dir}")
+        return str(cache_dir)
+
+class Voxelizer:
+    """Converts 3D Meshes (.off, .obj, .stl) to Voxel Grids."""
+    @staticmethod
+    def process_mesh(path, size=32):
+        try:
+            mesh = trimesh.load(path)
+            # Center and scale
+            mesh.apply_translation(-mesh.centroid)
+            mesh.apply_scale(0.8 / mesh.extents.max())
+
+            # Voxelize
+            voxels = mesh.voxelized(pitch=1.0/size).matrix
+
+            # Pad or crop to exact size
+            result = np.zeros((size, size, size), dtype=bool)
+            s_y, s_x, s_z = voxels.shape
+            dy, dx, dz = min(size, s_y), min(size, s_x), min(size, s_z)
+            result[:dy, :dx, :dz] = voxels[:dy, :dx, :dz]
+
+            return result
+        except Exception as e:
+            print(f"⚠️ Failed to process {path}: {e}")
+            return np.zeros((size, size, size), dtype=bool)
+
+class VoxelDataset(Dataset):
+    def __init__(self, cache_dir):
+        self.cache_dir = cache_dir
+        self.file_list = list(Path(cache_dir).glob("*.npy"))
+        print(f"✅ Loaded {len(self.file_list)} cached voxels for training.")
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def __getitem__(self, idx):
+        voxel = np.load(self.file_list[idx])
+        return torch.from_numpy(voxel).float().unsqueeze(0)
+
+# -----------------------------------------------------------------------------
+# 2. Model Architecture (3D-CNN Autoencoder)
+# -----------------------------------------------------------------------------
+class DhaatuV4Model(nn.Module):
+    def __init__(self, latent_dim=256):
+        super(DhaatuV4Model, self).__init__()
+
+        # Encoder: 3D-CNN
+        self.encoder = nn.Sequential(
+            nn.Conv3d(1, 32, kernel_size=4, stride=2, padding=1), # 32 -> 16
+            nn.BatchNorm3d(32),
+            nn.ReLU(),
+            nn.Conv3d(32, 64, kernel_size=4, stride=2, padding=1), # 16 -> 8
+            nn.BatchNorm3d(64),
+            nn.ReLU(),
+            nn.Conv3d(64, 128, kernel_size=4, stride=2, padding=1), # 8 -> 4
+            nn.BatchNorm3d(128),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(128 * 4 * 4 * 4, latent_dim)
+        )
+
+        # Decoder: Transpose 3D-CNN
+        self.decoder_fc = nn.Linear(latent_dim, 128 * 4 * 4 * 4)
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose3d(128, 64, kernel_size=4, stride=2, padding=1), # 4 -> 8
+            nn.BatchNorm3d(64),
+            nn.ReLU(),
+            nn.ConvTranspose3d(64, 32, kernel_size=4, stride=2, padding=1), # 8 -> 16
+            nn.BatchNorm3d(32),
+            nn.ReLU(),
+            nn.ConvTranspose3d(32, 1, kernel_size=4, stride=2, padding=1), # 16 -> 32
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        latent = self.encoder(x)
+        x = self.decoder_fc(latent)
+        x = x.view(-1, 128, 4, 4, 4)
+        reconstruction = self.decoder(x)
+        return reconstruction, latent
+
+# -----------------------------------------------------------------------------
+# 3. Training Logic
+# -----------------------------------------------------------------------------
+def train():
+    os.makedirs(Config.SAVE_DIR, exist_ok=True)
+
+    # Step 1: Big Data Download & Pre-processing (100x Speed Boost)
+    print("🚀 Dhaatu V4 Power-Speed Pipeline Initializing...")
+    dataset_path = DatasetManager.download_modelnet()
+    
+    # Pre-process raw meshes to .npy once (Expensive part)
+    cache_path = PreProcessor.run(dataset_path, Config.CACHE_PATH, Config.VOXEL_SIZE)
+    
+    # Step 2: Initialize components (Fast loading from cache)
+    dataset = VoxelDataset(cache_path)
+    if len(dataset) == 0:
+        print("❌ Cache empty! Check Raw dataset.")
+        return
+
+    dataloader = DataLoader(dataset, batch_size=Config.BATCH_SIZE, shuffle=True, num_workers=Config.NUM_WORKERS)
+    
+    model = DhaatuV4Model(Config.LATENT_DIM).to(Config.DEVICE)
+    optimizer = optim.Adam(model.parameters(), lr=Config.LEARNING_RATE)
+    criterion = nn.BCELoss() # Binary Cross Entropy for Voxel occupancy
+
+    print(f"Starting training on {Config.DEVICE}...")
+
+    history = []
+
+    for epoch in range(Config.EPOCHS):
+        model.train()
+        epoch_loss = 0
+
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{Config.EPOCHS}")
+        for batch in pbar:
+            batch = batch.to(Config.DEVICE)
+
+            # Forward pass
+            outputs, _ = model(batch)
+            loss = criterion(outputs, batch)
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item()
+            pbar.set_postfix(loss=loss.item())
+
+        avg_loss = epoch_loss / len(dataloader)
+        history.append(avg_loss)
+
+        # Save checkpoint
+        if (epoch + 1) % 10 == 0:
+            checkpoint_path = os.path.join(Config.SAVE_DIR, f"dhaatu_v4_epoch_{epoch+1}.pth")
+            torch.save(model.state_dict(), checkpoint_path)
+            print(f"Checkpoint saved: {checkpoint_path}")
+
+    # Save final model
+    torch.save(model.state_dict(), "dhaatu_v4_final.pth")
+    print("Training complete! Model saved as 'dhaatu_v4_final.pth'")
+
+    # Plot history
+    plt.figure()
+    plt.plot(history)
+    plt.title("Training Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("BCE Loss")
+    plt.savefig("loss_history.png")
+    plt.show()
+
+# -----------------------------------------------------------------------------
+# 4. Utilities for Export and Inference
+# -----------------------------------------------------------------------------
+def voxel_to_mesh(voxels, threshold=0.5):
+    """Convert voxel grid to trimesh for export."""
+    from skimage import measure
+    verts, faces, normals, values = measure.marching_cubes(voxels[0, 0], level=threshold)
+    return trimesh.Trimesh(vertices=verts, faces=faces)
+
+if __name__ == "__main__":
+    train()
