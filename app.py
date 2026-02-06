@@ -4,15 +4,29 @@ A custom 3D mesh generator using depth estimation.
 Works on CPU - completely free!
 """
 import gradio as gr
+import torch
 import numpy as np
 import tempfile
 import os
 from PIL import Image
 
 from core.depth_to_3d import pipeline
+from core.v4_pipeline import V4Pipeline
+import glob
+
+def get_available_models():
+    """Scan for all available .pth model checkpoints."""
+    models = glob.glob("*.pth") + glob.glob("checkpoints/*.pth")
+    return sorted(list(set(models)))
+
+# Initialize V4 Pipeline
+AVAILABLE_MODELS = get_available_models()
+DEFAULT_MODEL = "dhaatu_v4_final(trained).pth" if "dhaatu_v4_final(trained).pth" in AVAILABLE_MODELS else (AVAILABLE_MODELS[0] if AVAILABLE_MODELS else None)
+v4_pipeline = V4Pipeline(DEFAULT_MODEL, device="mps" if torch.backends.mps.is_available() else "cpu")
 
 
-def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold, volumetric, thickness, smooth_iterations, depth_boost, aggressive_cut, method, isolate_main_object):
+
+def generate_3d(image, depth_scale, resolution, simplify_factor, remove_background, bg_threshold, volumetric, thickness, smooth_iterations, depth_boost, aggressive_cut, method, isolate_main_object, v4_model_path):
     """Generate 3D mesh from input image."""
     if image is None:
         return None, None, "❌ Please upload an image"
@@ -22,23 +36,32 @@ def generate_3d(image, depth_scale, resolution, simplify_factor, remove_backgrou
         if not isinstance(image, Image.Image):
             image = Image.fromarray(image)
         
-        # Generate mesh
-        print(f"Starting generation with scale={depth_scale}, res={resolution}, simplify={simplify_factor}")
-        mesh = pipeline.generate(
-            image, 
-            depth_scale=depth_scale,
-            output_resolution=resolution,
-            simplify_factor=simplify_factor,
-            remove_background=remove_background,
-            bg_threshold=bg_threshold,
-            volumetric=volumetric,
-            thickness=thickness,
-            smooth_iterations=smooth_iterations,
-            depth_boost=depth_boost,
-            aggressive_cut=aggressive_cut,
-            method=method,
-            isolate_main_object=isolate_main_object
-        )
+        if "V4" in method:
+            print(f"🚀 Using V4 Generative Engine with model: {v4_model_path}")
+            # 1. Get depth from V3 pipeline
+            depth = pipeline.estimate_depth(image.resize((320, 320)))
+            # 2. Refine with V4
+            mesh = v4_pipeline.generate_from_depth(depth, checkpoint_path=v4_model_path)
+            if mesh is None:
+                raise ValueError("V4 Generative engine failed to produce a valid mesh.")
+        else:
+            # Generate mesh with V3
+            print(f"Starting generation with scale={depth_scale}, res={resolution}, simplify={simplify_factor}")
+            mesh = pipeline.generate(
+                image, 
+                depth_scale=depth_scale,
+                output_resolution=resolution,
+                simplify_factor=simplify_factor,
+                remove_background=remove_background,
+                bg_threshold=bg_threshold,
+                volumetric=volumetric,
+                thickness=thickness,
+                smooth_iterations=smooth_iterations,
+                depth_boost=depth_boost,
+                aggressive_cut=aggressive_cut,
+                method=method,
+                isolate_main_object=isolate_main_object
+            )
         
         # Export to GLB
         print(f"Generating GLB for mesh with {len(mesh.faces)} faces...")
@@ -77,10 +100,23 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             
             with gr.Accordion("⚙️ Generation Settings", open=True):
                 method = gr.Dropdown(
-                    choices=["Volumetric (Advanced)", "Surface Extrusion (Fast)"],
+                    choices=["Volumetric (Advanced)", "Surface Extrusion (Fast)", "V4 Generative (Industrial)"],
                     value="Volumetric (Advanced)",
                     label="🧠 Reconstruction Engine"
                 )
+                
+                v4_model_selection = gr.Dropdown(
+                    choices=AVAILABLE_MODELS,
+                    value=DEFAULT_MODEL,
+                    label="🏗️ V4 Model Version (Industrial Checkpoint)",
+                    visible=False
+                )
+                
+                # Show/hide model selection dynamically
+                def update_visibility(m):
+                    return gr.update(visible=("V4" in m))
+                
+                method.change(fn=update_visibility, inputs=[method], outputs=[v4_model_selection])
                 
                 depth_scale = gr.Slider(
                     minimum=0.1, maximum=1.5, value=0.6, step=0.05,
@@ -151,7 +187,8 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         inputs=[
             input_image, depth_scale, resolution, simplify_factor, 
             remove_background, bg_threshold, volumetric, thickness, 
-            smooth_iterations, depth_boost, aggressive_cut, method, isolate_main_object
+            smooth_iterations, depth_boost, aggressive_cut, method, isolate_main_object,
+            v4_model_selection
         ],
         outputs=[model_viewer, download_file, status_text]
     )
